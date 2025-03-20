@@ -1075,16 +1075,27 @@ class DashboardWindow(QMainWindow):
         
         for year in years:
             data = data_dict[year]
-            # Create masked array to handle no-data values
-            masked_array = np.ma.masked_where(data == -9999, data)
-            # Get district mask
-            district_mask = self.get_district_mask(data)
-            # Apply district mask
-            masked_array = np.ma.array(masked_array, mask=~district_mask | masked_array.mask)
+            # Create masked array for no-data values (-9999)
+            masked_array = np.ma.masked_where((data == -9999) | (data < 0), data)
+            
+            if self.current_district != "All Districts":
+                # Get district mask and combine with no-data mask
+                district_mask = self.get_district_mask(data)
+                masked_array = np.ma.array(masked_array, mask=~district_mask | masked_array.mask)
+            
             # Calculate mean of valid values only
-            means.append(float(masked_array.mean()))
+            mean_value = masked_array.mean()
+            if mean_value is not np.ma.masked:
+                means.append(float(mean_value))
+            else:
+                means.append(np.nan)
         
-        trend_ax.plot(years, means, 'o-', color='#0d47a1')
+        # Remove any NaN values
+        valid_data = [(year, mean) for year, mean in zip(years, means) if not np.isnan(mean)]
+        if valid_data:
+            plot_years, plot_means = zip(*valid_data)
+            trend_ax.plot(plot_years, plot_means, 'o-', color='#0d47a1')
+            
         trend_ax.set_title(f"Mean {self.current_layer} Over Time - {self.current_district}", color='white', fontsize=12, pad=15)
         trend_ax.set_xlabel("Year", color='white', fontsize=10)
         trend_ax.set_ylabel(ylabel, color='white', fontsize=10)
