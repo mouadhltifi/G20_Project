@@ -6,7 +6,7 @@ import rasterio
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                             QHBoxLayout, QComboBox, QLabel, QPushButton,
                             QTextEdit, QSplitter, QFrame, QScrollArea, QTabWidget,
-                            QSlider, QGridLayout, QSizePolicy)
+                            QSlider, QGridLayout, QSizePolicy, QCheckBox)
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QPalette, QColor, QFont
 import matplotlib.pyplot as plt
@@ -24,6 +24,7 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT
 from shapely.geometry import box
 from matplotlib.transforms import Affine2D
 import google.generativeai as genai
+import logging
 
 class DashboardWindow(QMainWindow):
     def __init__(self):
@@ -46,6 +47,7 @@ class DashboardWindow(QMainWindow):
         self.land_cover_dir = "data/Datasets_Hackathon/Modis_Land_Cover_Data"
         self.gpp_dir = "data/Datasets_Hackathon/MODIS_Gross_Primary_Production_GPP"
         self.admin_dir = "data/Datasets_Hackathon/Admin_layers"
+        self.infrastructure_dir = "data/Datasets_Hackathon/Streamwater_Line_Road_Network"
         
         # Load admin layers
         self.region_layer = gpd.read_file(os.path.join(self.admin_dir, "Assaba_Region_layer.shp"))
@@ -85,17 +87,45 @@ class DashboardWindow(QMainWindow):
         self.setCentralWidget(main_widget)
         main_layout = QHBoxLayout(main_widget)
         
-        # Create splitter for main content and side panel
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        main_layout.addWidget(splitter)
+        # Create tab widget
+        tab_widget = QTabWidget()
+        tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border: none;
+                background-color: #2b2b2b;
+            }
+            QTabBar::tab {
+                background-color: #3b3b3b;
+                color: white;
+                padding: 8px 16px;
+                border: none;
+                border-top-left-radius: 4px;
+                border-top-right-radius: 4px;
+            }
+            QTabBar::tab:selected {
+                background-color: #0d47a1;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #4b4b4b;
+            }
+        """)
+        main_layout.addWidget(tab_widget)
         
-        # Create main content area (left side)
-        main_content = QWidget()
-        main_content_layout = QVBoxLayout(main_content)
+        # Create Analysis tab
+        analysis_tab = QWidget()
+        analysis_layout = QHBoxLayout(analysis_tab)
         
-        # Create controls panel
-        controls_panel = QFrame()
-        controls_panel.setStyleSheet("""
+        # Create splitter for main content and side panel in Analysis tab
+        analysis_splitter = QSplitter(Qt.Orientation.Horizontal)
+        analysis_layout.addWidget(analysis_splitter)
+        
+        # Create main content area (left side) for Analysis tab
+        analysis_main_content = QWidget()
+        analysis_main_content_layout = QVBoxLayout(analysis_main_content)
+        
+        # Create controls panel for Analysis tab
+        analysis_controls_panel = QFrame()
+        analysis_controls_panel.setStyleSheet("""
             QFrame {
                 background-color: #3b3b3b;
                 border-radius: 10px;
@@ -147,9 +177,9 @@ class DashboardWindow(QMainWindow):
             }
         """)
         
-        controls_layout = QHBoxLayout(controls_panel)
+        analysis_controls_layout = QHBoxLayout(analysis_controls_panel)
         
-        # Year slider
+        # Year slider for Analysis tab
         year_label = QLabel("Year:")
         self.year_slider = QSlider(Qt.Orientation.Horizontal)
         self.year_slider.setMinimum(self.years[0])
@@ -159,88 +189,159 @@ class DashboardWindow(QMainWindow):
         self.year_label = QLabel(str(self.current_year))
         self.year_label.setStyleSheet("color: white; min-width: 50px;")
         
-        # Layer selection
+        # Layer selection for Analysis tab
         layer_label = QLabel("Layer:")
         self.layer_combo = QComboBox()
         self.layer_combo.addItems(["Precipitation", "Land Cover", "GPP"])
         self.layer_combo.currentTextChanged.connect(self.update_layer)
         
-        # District selection
+        # District selection for Analysis tab
         district_label = QLabel("District:")
         self.district_combo = QComboBox()
         self.district_combo.addItem("All Districts")
         self.district_combo.addItems(self.districts)
         self.district_combo.currentTextChanged.connect(self.update_district)
         
-        # Add controls to layout
-        controls_layout.addWidget(year_label)
-        controls_layout.addWidget(self.year_slider)
-        controls_layout.addWidget(self.year_label)
-        controls_layout.addWidget(layer_label)
-        controls_layout.addWidget(self.layer_combo)
-        controls_layout.addWidget(district_label)
-        controls_layout.addWidget(self.district_combo)
-        controls_layout.addStretch()
+        # Add admin layers toggle checkboxes for Analysis tab
+        admin_label = QLabel("Admin Layers:")
+        self.show_region_check = QCheckBox("Region Boundary")
+        self.show_districts_check = QCheckBox("District Boundaries")
+        self.show_region_check.setChecked(True)
+        self.show_districts_check.setChecked(True)
+        self.show_region_check.stateChanged.connect(self.update_visualizations)
+        self.show_districts_check.stateChanged.connect(self.update_visualizations)
         
-        main_content_layout.addWidget(controls_panel)
+        # Style the checkboxes for Analysis tab
+        self.show_region_check.setStyleSheet("""
+            QCheckBox {
+                color: white;
+                font-size: 12px;
+            }
+            QCheckBox::indicator {
+                width: 15px;
+                height: 15px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 1px solid #5b5b5b;
+                background-color: #4b4b4b;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid #0d47a1;
+                background-color: #0d47a1;
+                border-radius: 3px;
+            }
+        """)
+        self.show_districts_check.setStyleSheet(self.show_region_check.styleSheet())
         
-        # Create scrollable area for plots
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
+        # Add infrastructure layers toggle checkboxes for Analysis tab
+        infra_label = QLabel("Infrastructure:")
+        self.show_streams_check = QCheckBox("Stream Water")
+        self.show_roads_check = QCheckBox("Road Network")
+        self.show_streams_check.setChecked(True)
+        self.show_roads_check.setChecked(True)
+        self.show_streams_check.stateChanged.connect(self.update_visualizations)
+        self.show_roads_check.stateChanged.connect(self.update_visualizations)
+        
+        # Style the infrastructure checkboxes for Analysis tab
+        infra_style = """
+            QCheckBox {
+                color: white;
+                font-size: 12px;
+            }
+            QCheckBox::indicator {
+                width: 15px;
+                height: 15px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 1px solid #5b5b5b;
+                background-color: #4b4b4b;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 1px solid #0d47a1;
+                background-color: #0d47a1;
+                border-radius: 3px;
+            }
+        """
+        self.show_streams_check.setStyleSheet(infra_style)
+        self.show_roads_check.setStyleSheet(infra_style)
+        
+        # Add controls to layout for Analysis tab
+        analysis_controls_layout.addWidget(year_label)
+        analysis_controls_layout.addWidget(self.year_slider)
+        analysis_controls_layout.addWidget(self.year_label)
+        analysis_controls_layout.addWidget(layer_label)
+        analysis_controls_layout.addWidget(self.layer_combo)
+        analysis_controls_layout.addWidget(district_label)
+        analysis_controls_layout.addWidget(self.district_combo)
+        analysis_controls_layout.addWidget(admin_label)
+        analysis_controls_layout.addWidget(self.show_region_check)
+        analysis_controls_layout.addWidget(self.show_districts_check)
+        analysis_controls_layout.addWidget(infra_label)
+        analysis_controls_layout.addWidget(self.show_streams_check)
+        analysis_controls_layout.addWidget(self.show_roads_check)
+        analysis_controls_layout.addStretch()
+        
+        analysis_main_content_layout.addWidget(analysis_controls_panel)
+        
+        # Create scrollable area for plots in Analysis tab
+        analysis_scroll = QScrollArea()
+        analysis_scroll.setWidgetResizable(True)
+        analysis_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        analysis_scroll.setStyleSheet("""
             QScrollArea {
                 border: none;
                 background-color: #2b2b2b;
             }
         """)
         
-        # Create grid layout for plots
-        plots_widget = QWidget()
-        plots_layout = QHBoxLayout(plots_widget)  # Changed to horizontal layout
+        # Create grid layout for plots in Analysis tab
+        analysis_plots_widget = QWidget()
+        analysis_plots_layout = QHBoxLayout(analysis_plots_widget)
         
-        # Create left side (map) and right side (plots) containers
-        left_container = QWidget()
-        left_layout = QVBoxLayout(left_container)
-        right_container = QWidget()
-        right_layout = QVBoxLayout(right_container)
+        # Create left side (map) and right side (plots) containers for Analysis tab
+        analysis_left_container = QWidget()
+        analysis_left_layout = QVBoxLayout(analysis_left_container)
+        analysis_right_container = QWidget()
+        analysis_right_layout = QVBoxLayout(analysis_right_container)
         
-        # Create frames for each plot
+        # Create frames for each plot in Analysis tab
         self.map_frame = self.create_plot_frame("Map Visualization")
         self.trend_frame = self.create_plot_frame("Trend Analysis")
         self.stats_frame = self.create_plot_frame("Statistics")
         
-        # Add map to left container
-        left_layout.addWidget(self.map_frame)
+        # Add map to left container in Analysis tab
+        analysis_left_layout.addWidget(self.map_frame)
         
-        # Add other plots to right container
-        right_layout.addWidget(self.trend_frame)
-        right_layout.addWidget(self.stats_frame)
+        # Add other plots to right container in Analysis tab
+        analysis_right_layout.addWidget(self.trend_frame)
+        analysis_right_layout.addWidget(self.stats_frame)
         
-        # Add containers to main layout
-        plots_layout.addWidget(left_container)
-        plots_layout.addWidget(right_container)
+        # Add containers to main layout in Analysis tab
+        analysis_plots_layout.addWidget(analysis_left_container)
+        analysis_plots_layout.addWidget(analysis_right_container)
         
-        # Set stretch factors (map takes 60%, plots take 40%)
-        plots_layout.setStretch(0, 60)  # Left side (map)
-        plots_layout.setStretch(1, 40)  # Right side (plots)
+        # Set stretch factors (map takes 60%, plots take 40%) in Analysis tab
+        analysis_plots_layout.setStretch(0, 60)  # Left side (map)
+        analysis_plots_layout.setStretch(1, 40)  # Right side (plots)
         
-        scroll.setWidget(plots_widget)
-        main_content_layout.addWidget(scroll)
+        analysis_scroll.setWidget(analysis_plots_widget)
+        analysis_main_content_layout.addWidget(analysis_scroll)
         
-        # Create side panel (right side)
-        side_panel = QWidget()
-        side_panel.setStyleSheet("""
+        # Create side panel (right side) for Analysis tab
+        analysis_side_panel = QWidget()
+        analysis_side_panel.setStyleSheet("""
             QWidget {
                 background-color: #3b3b3b;
                 border-radius: 10px;
             }
         """)
-        side_layout = QVBoxLayout(side_panel)
+        analysis_side_layout = QVBoxLayout(analysis_side_panel)
         
-        # Chat interface
-        chat_frame = QFrame()
-        chat_frame.setStyleSheet("""
+        # Chat interface for Analysis tab
+        analysis_chat_frame = QFrame()
+        analysis_chat_frame.setStyleSheet("""
             QFrame {
                 background-color: #2b2b2b;
                 border-radius: 10px;
@@ -270,10 +371,10 @@ class DashboardWindow(QMainWindow):
                 background-color: #1565c0;
             }
         """)
-        chat_layout = QVBoxLayout(chat_frame)
+        analysis_chat_layout = QVBoxLayout(analysis_chat_frame)
         
-        chat_label = QLabel("Chat Interface")
-        chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        analysis_chat_label = QLabel("Chat Interface")
+        analysis_chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.chat_display = QTextEdit()
         self.chat_display.setReadOnly(True)
         self.chat_input = QTextEdit()
@@ -282,14 +383,14 @@ class DashboardWindow(QMainWindow):
         send_button = QPushButton("Send")
         send_button.clicked.connect(self.send_message)
         
-        chat_layout.addWidget(chat_label)
-        chat_layout.addWidget(self.chat_display)
-        chat_layout.addWidget(self.chat_input)
-        chat_layout.addWidget(send_button)
+        analysis_chat_layout.addWidget(analysis_chat_label)
+        analysis_chat_layout.addWidget(self.chat_display)
+        analysis_chat_layout.addWidget(self.chat_input)
+        analysis_chat_layout.addWidget(send_button)
         
-        # Statistics panel
-        stats_frame = QFrame()
-        stats_frame.setStyleSheet("""
+        # Statistics panel for Analysis tab
+        analysis_stats_frame = QFrame()
+        analysis_stats_frame.setStyleSheet("""
             QFrame {
                 background-color: #2b2b2b;
                 border-radius: 10px;
@@ -308,26 +409,127 @@ class DashboardWindow(QMainWindow):
                 padding: 5px;
             }
         """)
-        stats_layout = QVBoxLayout(stats_frame)
+        analysis_stats_layout = QVBoxLayout(analysis_stats_frame)
         
-        stats_label = QLabel("Statistics")
-        stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        analysis_stats_label = QLabel("Statistics")
+        analysis_stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.stats_display = QTextEdit()
         self.stats_display.setReadOnly(True)
         
-        stats_layout.addWidget(stats_label)
-        stats_layout.addWidget(self.stats_display)
+        analysis_stats_layout.addWidget(analysis_stats_label)
+        analysis_stats_layout.addWidget(self.stats_display)
         
-        # Add panels to side layout
-        side_layout.addWidget(chat_frame)
-        side_layout.addWidget(stats_frame)
+        # Add panels to side layout in Analysis tab
+        analysis_side_layout.addWidget(analysis_chat_frame)
+        analysis_side_layout.addWidget(analysis_stats_frame)
         
-        # Add main content and side panel to splitter
-        splitter.addWidget(main_content)
-        splitter.addWidget(side_panel)
+        # Add main content and side panel to splitter in Analysis tab
+        analysis_splitter.addWidget(analysis_main_content)
+        analysis_splitter.addWidget(analysis_side_panel)
         
-        # Set initial splitter sizes (70% main content, 30% side panel)
-        splitter.setSizes([1120, 480])
+        # Set initial splitter sizes (70% main content, 30% side panel) in Analysis tab
+        analysis_splitter.setSizes([1120, 480])
+        
+        # Create Prediction tab (similar structure to Analysis tab)
+        prediction_tab = QWidget()
+        prediction_layout = QHBoxLayout(prediction_tab)
+        
+        # Create splitter for main content and side panel in Prediction tab
+        prediction_splitter = QSplitter(Qt.Orientation.Horizontal)
+        prediction_layout.addWidget(prediction_splitter)
+        
+        # Create main content area (left side) for Prediction tab
+        prediction_main_content = QWidget()
+        prediction_main_content_layout = QVBoxLayout(prediction_main_content)
+        
+        # Create controls panel for Prediction tab
+        prediction_controls_panel = QFrame()
+        prediction_controls_panel.setStyleSheet(analysis_controls_panel.styleSheet())
+        prediction_controls_layout = QHBoxLayout(prediction_controls_panel)
+        
+        # Add placeholder controls for Prediction tab
+        prediction_label = QLabel("Prediction Controls")
+        prediction_label.setStyleSheet("color: white;")
+        prediction_controls_layout.addWidget(prediction_label)
+        prediction_controls_layout.addStretch()
+        
+        prediction_main_content_layout.addWidget(prediction_controls_panel)
+        
+        # Create scrollable area for plots in Prediction tab
+        prediction_scroll = QScrollArea()
+        prediction_scroll.setWidgetResizable(True)
+        prediction_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        prediction_scroll.setStyleSheet(analysis_scroll.styleSheet())
+        
+        # Create grid layout for plots in Prediction tab
+        prediction_plots_widget = QWidget()
+        prediction_plots_layout = QHBoxLayout(prediction_plots_widget)
+        
+        # Create left side (map) and right side (plots) containers for Prediction tab
+        prediction_left_container = QWidget()
+        prediction_left_layout = QVBoxLayout(prediction_left_container)
+        prediction_right_container = QWidget()
+        prediction_right_layout = QVBoxLayout(prediction_right_container)
+        
+        # Create frames for each plot in Prediction tab
+        self.prediction_map_frame = self.create_plot_frame("Prediction Map")
+        self.prediction_trend_frame = self.create_plot_frame("Prediction Trends")
+        self.prediction_stats_frame = self.create_plot_frame("Prediction Statistics")
+        
+        # Add map to left container in Prediction tab
+        prediction_left_layout.addWidget(self.prediction_map_frame)
+        
+        # Add other plots to right container in Prediction tab
+        prediction_right_layout.addWidget(self.prediction_trend_frame)
+        prediction_right_layout.addWidget(self.prediction_stats_frame)
+        
+        # Add containers to main layout in Prediction tab
+        prediction_plots_layout.addWidget(prediction_left_container)
+        prediction_plots_layout.addWidget(prediction_right_container)
+        
+        # Set stretch factors (map takes 60%, plots take 40%) in Prediction tab
+        prediction_plots_layout.setStretch(0, 60)  # Left side (map)
+        prediction_plots_layout.setStretch(1, 40)  # Right side (plots)
+        
+        prediction_scroll.setWidget(prediction_plots_widget)
+        prediction_main_content_layout.addWidget(prediction_scroll)
+        
+        # Create side panel (right side) for Prediction tab
+        prediction_side_panel = QWidget()
+        prediction_side_panel.setStyleSheet(analysis_side_panel.styleSheet())
+        prediction_side_layout = QVBoxLayout(prediction_side_panel)
+        
+        # Add placeholder panels for Prediction tab
+        prediction_chat_frame = QFrame()
+        prediction_chat_frame.setStyleSheet(analysis_chat_frame.styleSheet())
+        prediction_chat_layout = QVBoxLayout(prediction_chat_frame)
+        
+        prediction_chat_label = QLabel("Prediction Chat Interface")
+        prediction_chat_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        prediction_chat_layout.addWidget(prediction_chat_label)
+        
+        prediction_stats_frame = QFrame()
+        prediction_stats_frame.setStyleSheet(analysis_stats_frame.styleSheet())
+        prediction_stats_layout = QVBoxLayout(prediction_stats_frame)
+        
+        prediction_stats_label = QLabel("Prediction Statistics")
+        prediction_stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        prediction_stats_layout.addWidget(prediction_stats_label)
+        
+        # Add panels to side layout in Prediction tab
+        prediction_side_layout.addWidget(prediction_chat_frame)
+        prediction_side_layout.addWidget(prediction_stats_frame)
+        
+        # Add main content and side panel to splitter in Prediction tab
+        prediction_splitter.addWidget(prediction_main_content)
+        prediction_splitter.addWidget(prediction_side_panel)
+        
+        # Set initial splitter sizes (70% main content, 30% side panel) in Prediction tab
+        prediction_splitter.setSizes([1120, 480])
+        
+        # Add tabs to tab widget
+        tab_widget.addTab(analysis_tab, "Analysis")
+        tab_widget.addTab(prediction_tab, "Prediction")
         
         # Set dark theme
         self.setStyleSheet("""
@@ -358,10 +560,6 @@ class DashboardWindow(QMainWindow):
         layout.setContentsMargins(5, 5, 5, 5)  # Reduce margins
         layout.setSpacing(5)  # Reduce spacing
         
-        title_label = QLabel(title)
-        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title_label)
-        
         if title == "Map Visualization":
             # Create figure with larger size for the map
             canvas = FigureCanvas(plt.figure(figsize=(12, 8)))
@@ -370,12 +568,18 @@ class DashboardWindow(QMainWindow):
             layout.addWidget(toolbar)
             canvas.setStyleSheet("background-color: transparent;")
             layout.addWidget(canvas)
+            # Set the canvas to expand in both directions
+            canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         else:
+            # Add title for non-map frames
+            title_label = QLabel(title)
+            title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(title_label)
+            
             # Create figure that will adjust to container size
             canvas = FigureCanvas(plt.figure(figsize=(6, 4)))
             canvas.setStyleSheet("background-color: transparent;")
             layout.addWidget(canvas)
-            
             # Make the canvas expand to fill available space
             canvas.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         
@@ -409,14 +613,47 @@ class DashboardWindow(QMainWindow):
                 with rasterio.open(os.path.join(self.gpp_dir, file)) as src:
                     self.gpp_data[year] = src.read(1)
         
-        # Print loaded data for debugging
-        print(f"Loaded precipitation years: {sorted(self.precipitation_data.keys())}")
-        print(f"Loaded land cover years: {sorted(self.land_cover_data.keys())}")
-        print(f"Loaded GPP years: {sorted(self.gpp_data.keys())}")
+        # Load infrastructure layers
+        try:
+            # Load and print CRS information first
+            print(f"Raster CRS: {self.raster_crs}")
+            
+            # Load infrastructure layers
+            self.streams_layer = gpd.read_file(os.path.join(self.infrastructure_dir, "Streamwater.shp"))
+            self.roads_layer = gpd.read_file(os.path.join(self.infrastructure_dir, "Main_Road.shp"))
+            
+            print(f"Original roads CRS: {self.roads_layer.crs}")
+            print(f"Original streams CRS: {self.streams_layer.crs}")
+            
+            # Ensure we're using the same CRS as the raster
+            if self.roads_layer.crs != self.raster_crs:
+                self.roads_layer = self.roads_layer.to_crs(self.raster_crs)
+            if self.streams_layer.crs != self.raster_crs:
+                self.streams_layer = self.streams_layer.to_crs(self.raster_crs)
+            
+            print(f"Final roads CRS: {self.roads_layer.crs}")
+            print(f"Final streams CRS: {self.streams_layer.crs}")
+            
+            # Print bounds information
+            print(f"Raster bounds: {self.reference_bounds}")
+            print(f"Roads bounds: {self.roads_layer.total_bounds}")
+            print(f"Streams bounds: {self.streams_layer.total_bounds}")
+            
+            logging.info("Successfully loaded infrastructure layers")
+        except Exception as e:
+            logging.error(f"Error loading infrastructure layers: {str(e)}")
+            # Create empty GeoDataFrames as fallback
+            self.streams_layer = gpd.GeoDataFrame()
+            self.roads_layer = gpd.GeoDataFrame()
         
         # Reproject admin layers to match raster CRS
         self.region_layer = self.region_layer.to_crs(self.raster_crs)
         self.districts_layer = self.districts_layer.to_crs(self.raster_crs)
+        
+        # Print loaded data for debugging
+        print(f"Loaded precipitation years: {sorted(self.precipitation_data.keys())}")
+        print(f"Loaded land cover years: {sorted(self.land_cover_data.keys())}")
+        print(f"Loaded GPP years: {sorted(self.gpp_data.keys())}")
     
     def update_year(self, year):
         self.current_year = year
@@ -466,13 +703,13 @@ class DashboardWindow(QMainWindow):
             title = f"Precipitation (mm) - {self.current_year}"
             # Set fixed scale limits for precipitation (0-1000mm)
             vmin = 0
-            vmax = 1000
+            vmax = 600
         elif self.current_layer == "Land Cover":
             data = self.land_cover_data[self.current_year]
-            cmap = plt.cm.tab20
+            cmap = plt.cm.tab10
             title = f"Land Cover - {self.current_year}"
-            vmin = 0
-            vmax = 20  # Assuming 20 land cover classes
+            vmin = 7
+            vmax = 16  # Assuming 20 land cover classes
         else:  # GPP
             data = self.gpp_data[self.current_year]
             # Create custom colormap for GPP (brown -> yellow -> green)
@@ -482,8 +719,8 @@ class DashboardWindow(QMainWindow):
             cmap = custom_cmap
             title = f"GPP (gC/m²/year) - {self.current_year}"
             # Set fixed scale limits for GPP (0-2000 gC/m²/year)
-            vmin = 0
-            vmax = 2000
+            vmin = 200
+            vmax = 60000
         
         # Apply mask for nodata values
         data = np.ma.masked_invalid(data)
@@ -503,51 +740,88 @@ class DashboardWindow(QMainWindow):
         region_layer_plot = self.region_layer.copy()
         districts_layer_plot = self.districts_layer.copy()
         
-        # Add region boundary first (as background)
-        region_layer_plot.boundary.plot(
-            ax=map_ax,
-            color='yellow',
-            linewidth=2,
-            label='Region Boundary',
-            zorder=2
-        )
-        
-        # Add district boundaries with better visibility
-        if self.current_district != "All Districts":
-            # Plot all districts in light gray first
-            districts_layer_plot.boundary.plot(
+        # Add stream water if enabled
+        if self.show_streams_check.isChecked() and not self.streams_layer.empty:
+            self.streams_layer.plot(
                 ax=map_ax,
-                color='lightgray',
+                color='blue',
                 linewidth=1,
-                alpha=0.3,
+                alpha=0.6,
+                label='Stream Water',
+                zorder=2
+            )
+
+        # Add road network if enabled
+        if self.show_roads_check.isChecked() and not self.roads_layer.empty:
+            # Plot roads with fixed linewidth
+            self.roads_layer.plot(
+                ax=map_ax,
+                color='orange',
+                linewidth=1.5,
+                alpha=0.8,
+                label='Road Network',
+                zorder=2
+            )
+            
+            # Add road network statistics to the plot
+            road_lengths = self.roads_layer.geometry.length
+            stats_text = f"Road Network Stats:\n"
+            stats_text += f"Total Length: {road_lengths.sum()/1000:.1f} km\n"
+            stats_text += f"Segments: {len(self.roads_layer)}"
+            map_ax.text(0.02, 0.02, stats_text,
+                       transform=map_ax.transAxes,
+                       color='white',
+                       fontsize=8,
+                       bbox=dict(facecolor='#3b3b3b', alpha=0.7, edgecolor='none'),
+                       zorder=6)
+        
+        # Add region boundary if enabled
+        if self.show_region_check.isChecked():
+            region_layer_plot.boundary.plot(
+                ax=map_ax,
+                color='yellow',
+                linewidth=2,
+                label='Region Boundary',
                 zorder=3
             )
-            # Then highlight the selected district
-            district_mask = districts_layer_plot['ADM3_EN'] == self.current_district
-            if district_mask.any():
-                districts_layer_plot[district_mask].boundary.plot(
+        
+        # Add district boundaries if enabled
+        if self.show_districts_check.isChecked():
+            if self.current_district != "All Districts":
+                # Plot all districts in light gray first
+                districts_layer_plot.boundary.plot(
                     ax=map_ax,
-                    color='red',
-                    linewidth=2,
-                    label=self.current_district,
+                    color='lightgray',
+                    linewidth=1,
+                    alpha=0.3,
                     zorder=4
                 )
-                # Fill the selected district with semi-transparent red
-                districts_layer_plot[district_mask].plot(
+                # Then highlight the selected district
+                district_mask = districts_layer_plot['ADM3_EN'] == self.current_district
+                if district_mask.any():
+                    districts_layer_plot[district_mask].boundary.plot(
+                        ax=map_ax,
+                        color='red',
+                        linewidth=2,
+                        label=self.current_district,
+                        zorder=5
+                    )
+                    # Fill the selected district with semi-transparent red
+                    districts_layer_plot[district_mask].plot(
+                        ax=map_ax,
+                        color='red',
+                        alpha=0.1,
+                        zorder=4
+                    )
+            else:
+                # Plot all districts with better visibility
+                districts_layer_plot.boundary.plot(
                     ax=map_ax,
-                    color='red',
-                    alpha=0.1,
-                    zorder=3
+                    color='white',
+                    linewidth=1.5,
+                    alpha=0.7,
+                    zorder=4
                 )
-        else:
-            # Plot all districts with better visibility
-            districts_layer_plot.boundary.plot(
-                ax=map_ax,
-                color='white',
-                linewidth=1.5,
-                alpha=0.7,
-                zorder=3
-            )
         
         # Customize the plot
         map_ax.set_title(title, color='white', pad=20)
@@ -582,13 +856,13 @@ class DashboardWindow(QMainWindow):
         
         years = sorted(data_dict.keys())
         means = [np.nanmean(data_dict[year]) for year in years]
+        means = [np.mean(data_dict[year][data_dict[year] != -1e+30]) for year in years]
         
         trend_ax.plot(years, means, 'o-', color='#0d47a1')
         trend_ax.set_title(f"Mean {self.current_layer} Over Time", color='white', fontsize=12, pad=15)
         trend_ax.set_xlabel("Year", color='white', fontsize=10)
         trend_ax.set_ylabel(ylabel, color='white', fontsize=10)
         trend_ax.tick_params(colors='white', labelsize=9)
-        trend_ax.grid(True, color='#4b4b4b')
         trend_fig.patch.set_facecolor('#3b3b3b')
         
         # Adjust layout to fit container
@@ -633,6 +907,7 @@ class DashboardWindow(QMainWindow):
             stats_ax.set_xticklabels([f'Class {int(c)}' for c in unique_classes], rotation=45, color='white', fontsize=9)
         else:
             data = self.current_data.compressed()  # Get non-masked values
+            data = data[data > -1e+30]
             
             # Create histogram
             stats_ax.hist(data, bins=50, color='#0d47a1', alpha=0.7)

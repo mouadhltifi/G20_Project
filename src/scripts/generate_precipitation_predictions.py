@@ -41,7 +41,19 @@ def load_historical_data(start_year=2011, end_year=2023):
         file_path = f'data/Datasets_Hackathon/Climate_Precipitation_Data/{year}R.tif'
         with rasterio.open(file_path) as src:
             year_data = src.read(1).astype(np.float32)
-            year_data = np.nan_to_num(year_data, nan=np.nanmean(year_data))
+            
+            # Handle invalid values
+            # Replace negative values with 0 (precipitation can't be negative)
+            year_data = np.maximum(year_data, 0)
+            
+            # Replace NaN and inf values with the mean of valid values
+            valid_mask = np.isfinite(year_data)
+            if np.any(valid_mask):
+                mean_value = np.mean(year_data[valid_mask])
+                year_data[~valid_mask] = mean_value
+            else:
+                year_data.fill(0)  # If all values are invalid, use 0
+            
             data.append(year_data)
     
     return np.array(data), np.array(range(start_year, end_year + 1)), coordinates, transform, crs
@@ -94,7 +106,14 @@ def prepare_training_data(historical_data, historical_years, coordinates):
                 X.append(features)
                 y.append(historical_data[year_idx, i, j])
     
-    return np.array(X), np.array(y), coord_scaler
+    X = np.array(X, dtype=np.float32)
+    y = np.array(y, dtype=np.float32)
+    
+    # Ensure all values are finite
+    X = np.nan_to_num(X, nan=0, posinf=0, neginf=0)
+    y = np.nan_to_num(y, nan=0, posinf=0, neginf=0)
+    
+    return X, y, coord_scaler
 
 def train_model(X, y):
     """Train a Random Forest model."""
@@ -114,7 +133,7 @@ def train_model(X, y):
     model.fit(X_scaled, y)
     return model, scaler
 
-def generate_predictions(model, scaler, coordinates, transform, crs, start_year=2024, end_year=2030):
+def generate_predictions(model, scaler, coordinates, transform, crs, coord_scaler, start_year=2024, end_year=2030):
     """Generate predictions for future years at each location."""
     logging.info(f'Generating predictions for {start_year}-{end_year}...')
     
@@ -124,17 +143,22 @@ def generate_predictions(model, scaler, coordinates, transform, crs, start_year=
     # Initialize predictions array
     height, width = coordinates.shape[:2]
     n_years = len(future_years)
-    predictions = np.zeros((n_years, height, width))
+    predictions = np.zeros((n_years, height, width), dtype=np.float32)
+    
+    # Normalize coordinates
+    flat_coords = coordinates.reshape(-1, 2)
+    normalized_coords = coord_scaler.transform(flat_coords).reshape(height, width, 2)
     
     # Generate predictions for each location
     for i in tqdm(range(height), desc="Generating predictions"):
         for j in range(width):
-            # Create features for this location
-            loc_coords = coordinates[i, j]
+            # Create features for this location using normalized coordinates
+            loc_coords = normalized_coords[i, j]
             
             # Generate predictions for each future year at this location
             for year_idx, year in enumerate(future_years):
                 features = prepare_features_for_location(year, loc_coords)
+                features = np.nan_to_num(features, nan=0, posinf=0, neginf=0)
                 features_scaled = scaler.transform(features.reshape(1, -1))
                 pred = model.predict(features_scaled)[0]
                 
@@ -187,14 +211,29 @@ def main():
     # Load historical data with spatial information
     historical_data, historical_years, coordinates, transform, crs = load_historical_data()
     
+    # Print data statistics for validation
+    logging.info("\nHistorical Data Statistics:")
+    logging.info(f"Data shape: {historical_data.shape}")
+    logging.info(f"Mean precipitation: {np.mean(historical_data):.2f} mm")
+    logging.info(f"Std precipitation: {np.std(historical_data):.2f} mm")
+    logging.info(f"Min precipitation: {np.min(historical_data):.2f} mm")
+    logging.info(f"Max precipitation: {np.max(historical_data):.2f} mm")
+    
     # Prepare training data maintaining spatial relationships
     X, y, coord_scaler = prepare_training_data(historical_data, historical_years, coordinates)
+    
+    # Print training data statistics
+    logging.info("\nTraining Data Statistics:")
+    logging.info(f"X shape: {X.shape}")
+    logging.info(f"y shape: {y.shape}")
+    logging.info(f"Mean target: {np.mean(y):.2f} mm")
+    logging.info(f"Std target: {np.std(y):.2f} mm")
     
     # Train model
     model, scaler = train_model(X, y)
     
     # Generate predictions for 2024-2030
-    future_years, predictions = generate_predictions(model, scaler, coordinates, transform, crs)
+    future_years, predictions = generate_predictions(model, scaler, coordinates, transform, crs, coord_scaler)
     
     # Save predictions
     save_predictions(predictions, future_years, coordinates, transform, crs)
