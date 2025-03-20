@@ -1,0 +1,41 @@
+# Virtual Environment
+venv/
+venv_ml/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+logs/
+*.log
+
+# Data
+data/
+*.csv
+*.tif
+*.shp
+*.shx
+*.prj
+*.dbf
+*.xml
+*.sbn
+*.sbx
+*.cpg
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# API Keys and Secrets
+api_key.txt 
