@@ -25,6 +25,7 @@ from shapely.geometry import box
 from matplotlib.transforms import Affine2D
 import google.generativeai as genai
 import logging
+from matplotlib.patches import Patch
 
 class DashboardWindow(QMainWindow):
     def __init__(self):
@@ -48,6 +49,7 @@ class DashboardWindow(QMainWindow):
         self.gpp_dir = "data/Datasets_Hackathon/MODIS_Gross_Primary_Production_GPP"
         self.admin_dir = "data/Datasets_Hackathon/Admin_layers"
         self.infrastructure_dir = "data/Datasets_Hackathon/Streamwater_Line_Road_Network"
+        self.ipc_dir = "data/Datasets_Hackathon/IPC_Data"
         
         # Load admin layers
         self.region_layer = gpd.read_file(os.path.join(self.admin_dir, "Assaba_Region_layer.shp"))
@@ -60,10 +62,14 @@ class DashboardWindow(QMainWindow):
                        if f.endswith('.tif') and 'LCT' in f and 2011 <= int(f.split('LCT')[0]) <= 2023])
         gpp_years = set([int(f.split('_GP')[0]) for f in os.listdir(self.gpp_dir) 
                         if f.endswith('.tif') and '_GP.' in f and 2011 <= int(f.split('_GP')[0]) <= 2023])
+        ipc_years = set([int(f.split('IPC')[0]) for f in os.listdir(self.ipc_dir)
+                        if f.endswith('.tif') and 'IPC' in f])
         
         # Use years that are available in all datasets
         self.years = sorted(list(precip_years & lc_years & gpp_years))
+        self.ipc_years = sorted(list(ipc_years))  # Keep separate list for IPC years
         print(f"Available years in all datasets: {self.years}")
+        print(f"Available IPC years: {self.ipc_years}")
         
         if not self.years:
             raise ValueError("No common years found across datasets!")
@@ -74,6 +80,7 @@ class DashboardWindow(QMainWindow):
         self.precipitation_data = {}
         self.land_cover_data = {}
         self.gpp_data = {}
+        self.ipc_data = {}
         self.current_year = self.years[0]
         self.current_layer = "Precipitation"
         self.current_district = "All Districts"
@@ -192,7 +199,7 @@ class DashboardWindow(QMainWindow):
         # Layer selection for Analysis tab
         layer_label = QLabel("Layer:")
         self.layer_combo = QComboBox()
-        self.layer_combo.addItems(["Precipitation", "Land Cover", "GPP"])
+        self.layer_combo.addItems(["Precipitation", "Land Cover", "GPP", "IPC"])
         self.layer_combo.currentTextChanged.connect(self.update_layer)
         
         # District selection for Analysis tab
@@ -613,6 +620,13 @@ class DashboardWindow(QMainWindow):
                 with rasterio.open(os.path.join(self.gpp_dir, file)) as src:
                     self.gpp_data[year] = src.read(1)
         
+        # Load IPC data
+        for year in self.ipc_years:
+            file = f"{year}IPC.tif"
+            if os.path.exists(os.path.join(self.ipc_dir, file)):
+                with rasterio.open(os.path.join(self.ipc_dir, file)) as src:
+                    self.ipc_data[year] = src.read(1)
+        
         # Load infrastructure layers
         try:
             # Load and print CRS information first
@@ -663,6 +677,21 @@ class DashboardWindow(QMainWindow):
     
     def update_layer(self, layer):
         self.current_layer = layer
+        # Update year slider range based on selected layer
+        if layer == "IPC":
+            self.year_slider.setMinimum(min(self.ipc_years))
+            self.year_slider.setMaximum(max(self.ipc_years))
+            if self.current_year not in self.ipc_years:
+                self.current_year = min(self.ipc_years)
+                self.year_slider.setValue(self.current_year)
+                self.year_label.setText(str(self.current_year))
+        else:
+            self.year_slider.setMinimum(min(self.years))
+            self.year_slider.setMaximum(max(self.years))
+            if self.current_year not in self.years:
+                self.current_year = min(self.years)
+                self.year_slider.setValue(self.current_year)
+                self.year_label.setText(str(self.current_year))
         self.update_visualizations()
         self.update_statistics()
     
@@ -701,7 +730,6 @@ class DashboardWindow(QMainWindow):
             data = self.precipitation_data[self.current_year]
             cmap = plt.cm.Blues
             title = f"Precipitation (mm) - {self.current_year}"
-            # Set fixed scale limits for precipitation (0-1000mm)
             vmin = 0
             vmax = 600
         elif self.current_layer == "Land Cover":
@@ -709,21 +737,40 @@ class DashboardWindow(QMainWindow):
             cmap = plt.cm.tab10
             title = f"Land Cover - {self.current_year}"
             vmin = 7
-            vmax = 16  # Assuming 20 land cover classes
-        else:  # GPP
+            vmax = 16
+        elif self.current_layer == "GPP":
             data = self.gpp_data[self.current_year]
-            # Create custom colormap for GPP (brown -> yellow -> green)
-            colors = ['#8B4513', '#DAA520', '#90EE90', '#228B22']  # brown -> yellow -> light green -> forest green
+            colors = ['#8B4513', '#DAA520', '#90EE90', '#228B22']
             n_bins = 256
             custom_cmap = LinearSegmentedColormap.from_list('custom', colors, N=n_bins)
             cmap = custom_cmap
             title = f"GPP (gC/m²/year) - {self.current_year}"
-            # Set fixed scale limits for GPP (0-2000 gC/m²/year)
             vmin = 200
             vmax = 60000
+        else:  # IPC
+            data = self.ipc_data[self.current_year]
+            # Create custom colormap for IPC phases with more distinct colors
+            colors = ['#FFFFFF',  # white for no data
+                     '#92D050',  # green for Phase 1 (Minimal)
+                     '#FFEB3B',  # yellow for Phase 2 (Stressed)
+                     '#FF9800',  # orange for Phase 3 (Crisis)
+                     '#FF0000']  # red for Phase 4 (Emergency)
+            custom_cmap = LinearSegmentedColormap.from_list('ipc', colors, N=5)
+            cmap = custom_cmap
+            title = f"IPC Phase Classification - {self.current_year}"
+            vmin = 0  # 0 for no data
+            vmax = 4  # max phase is 4
+            
+            # Create custom legend for IPC phases with better visibility
+            legend_elements = [
+                Patch(facecolor='#92D050', edgecolor='black', label='Phase 1: Minimal'),
+                Patch(facecolor='#FFEB3B', edgecolor='black', label='Phase 2: Stressed'),
+                Patch(facecolor='#FF9800', edgecolor='black', label='Phase 3: Crisis'),
+                Patch(facecolor='#FF0000', edgecolor='black', label='Phase 4: Emergency')
+            ]
         
         # Apply mask for nodata values
-        data = np.ma.masked_invalid(data)
+        data = np.ma.masked_where(data == -9999, data)
         
         # Plot the data
         im = map_ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax, extent=[
@@ -732,9 +779,6 @@ class DashboardWindow(QMainWindow):
             self.reference_bounds.bottom,
             self.reference_bounds.top
         ])
-        
-        # Add colorbar
-        plt.colorbar(im, ax=map_ax, label=title.split(' - ')[0])
         
         # Transform the admin layers to match the raster's coordinate system
         region_layer_plot = self.region_layer.copy()
@@ -747,19 +791,16 @@ class DashboardWindow(QMainWindow):
                 color='blue',
                 linewidth=1,
                 alpha=0.6,
-                label='Stream Water',
                 zorder=2
             )
 
         # Add road network if enabled
         if self.show_roads_check.isChecked() and not self.roads_layer.empty:
-            # Plot roads with fixed linewidth
             self.roads_layer.plot(
                 ax=map_ax,
                 color='orange',
                 linewidth=1.5,
                 alpha=0.8,
-                label='Road Network',
                 zorder=2
             )
             
@@ -781,7 +822,6 @@ class DashboardWindow(QMainWindow):
                 ax=map_ax,
                 color='yellow',
                 linewidth=2,
-                label='Region Boundary',
                 zorder=3
             )
         
@@ -803,7 +843,6 @@ class DashboardWindow(QMainWindow):
                         ax=map_ax,
                         color='red',
                         linewidth=2,
-                        label=self.current_district,
                         zorder=5
                     )
                     # Fill the selected district with semi-transparent red
@@ -826,7 +865,60 @@ class DashboardWindow(QMainWindow):
         # Customize the plot
         map_ax.set_title(title, color='white', pad=20)
         map_ax.set_axis_off()
-        map_ax.legend(loc='upper right', facecolor='#3b3b3b', edgecolor='white')
+        
+        # Add legend based on layer type
+        if self.current_layer == "IPC":
+            # Add custom legend for IPC phases with better positioning and style
+            legend = map_ax.legend(
+                handles=legend_elements,
+                loc='upper left',  # Changed to upper left to avoid overlap
+                bbox_to_anchor=(0.02, 0.98),  # Adjusted position
+                title='IPC Classification',
+                title_fontsize=12,
+                fontsize=10,
+                framealpha=0.8,
+                edgecolor='white',
+                facecolor='#3b3b3b'
+            )
+            legend.get_title().set_color('white')
+            for text in legend.get_texts():
+                text.set_color('white')
+        else:
+            # Add colorbar for non-IPC layers
+            plt.colorbar(im, ax=map_ax, label=title.split(' - ')[0])
+            
+            # Add infrastructure and admin boundaries legend
+            handles = []
+            labels = []
+            if self.show_streams_check.isChecked() and not self.streams_layer.empty:
+                handles.append(plt.Line2D([0], [0], color='blue', linewidth=1))
+                labels.append('Stream Water')
+            if self.show_roads_check.isChecked() and not self.roads_layer.empty:
+                handles.append(plt.Line2D([0], [0], color='orange', linewidth=1.5))
+                labels.append('Road Network')
+            if self.show_region_check.isChecked():
+                handles.append(plt.Line2D([0], [0], color='yellow', linewidth=2))
+                labels.append('Region Boundary')
+            if self.show_districts_check.isChecked():
+                handles.append(plt.Line2D([0], [0], color='white', linewidth=1.5))
+                labels.append('District Boundaries')
+            
+            if handles:
+                legend = map_ax.legend(
+                    handles=handles,
+                    labels=labels,
+                    loc='upper right',
+                    bbox_to_anchor=(0.98, 0.98),
+                    title='Map Elements',
+                    title_fontsize=10,
+                    fontsize=8,
+                    framealpha=0.8,
+                    edgecolor='white',
+                    facecolor='#3b3b3b'
+                )
+                legend.get_title().set_color('white')
+                for text in legend.get_texts():
+                    text.set_color('white')
         
         # Set the extent to match the reference bounds
         map_ax.set_xlim(self.reference_bounds.left, self.reference_bounds.right)
@@ -850,9 +942,12 @@ class DashboardWindow(QMainWindow):
         elif self.current_layer == "Land Cover":
             data_dict = self.land_cover_data
             ylabel = "Land Cover Class"
-        else:  # GPP
+        elif self.current_layer == "GPP":
             data_dict = self.gpp_data
             ylabel = "GPP (gC/m²/year)"
+        else:  # IPC
+            data_dict = self.ipc_data
+            ylabel = "IPC Phase"
         
         years = sorted(data_dict.keys())
         means = [np.nanmean(data_dict[year]) for year in years]
@@ -929,24 +1024,8 @@ class DashboardWindow(QMainWindow):
         if self.current_layer == "Precipitation":
             data = self.current_data
             unit = "mm"
-        elif self.current_layer == "Land Cover":
-            data = self.current_data
-            unit = "class"
-        else:  # GPP
-            data = self.current_data
-            unit = "gC/m²/year"
-        
-        stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
-        stats_text += f"Selected District: {self.current_district}\n\n"
-        
-        if self.current_layer == "Land Cover":
-            unique_classes, counts = np.unique(data, return_counts=True)
-            total = np.sum(counts)
-            stats_text += "Class Distribution:\n"
-            for cls, count in zip(unique_classes, counts):
-                percentage = (count / total) * 100
-                stats_text += f"Class {int(cls)}: {count} pixels ({percentage:.1f}%)\n"
-        else:
+            stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
+            stats_text += f"Selected District: {self.current_district}\n\n"
             stats_text += f"Mean: {np.mean(data):.2f} {unit}\n"
             stats_text += f"Median: {np.median(data):.2f} {unit}\n"
             stats_text += f"Standard Deviation: {np.std(data):.2f} {unit}\n"
@@ -954,6 +1033,50 @@ class DashboardWindow(QMainWindow):
             stats_text += f"Maximum: {np.max(data):.2f} {unit}\n"
             stats_text += f"25th Percentile: {np.percentile(data, 25):.2f} {unit}\n"
             stats_text += f"75th Percentile: {np.percentile(data, 75):.2f} {unit}\n"
+        elif self.current_layer == "Land Cover":
+            data = self.current_data
+            unit = "class"
+            stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
+            stats_text += f"Selected District: {self.current_district}\n\n"
+            unique_classes, counts = np.unique(data[~data.mask], return_counts=True)
+            total = np.sum(counts)
+            stats_text += "Class Distribution:\n"
+            for cls, count in zip(unique_classes, counts):
+                percentage = (count / total) * 100
+                stats_text += f"Class {int(cls)}: {count} pixels ({percentage:.1f}%)\n"
+        elif self.current_layer == "GPP":
+            data = self.current_data
+            unit = "gC/m²/year"
+            stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
+            stats_text += f"Selected District: {self.current_district}\n\n"
+            stats_text += f"Mean: {np.mean(data):.2f} {unit}\n"
+            stats_text += f"Median: {np.median(data):.2f} {unit}\n"
+            stats_text += f"Standard Deviation: {np.std(data):.2f} {unit}\n"
+            stats_text += f"Minimum: {np.min(data):.2f} {unit}\n"
+            stats_text += f"Maximum: {np.max(data):.2f} {unit}\n"
+            stats_text += f"25th Percentile: {np.percentile(data, 25):.2f} {unit}\n"
+            stats_text += f"75th Percentile: {np.percentile(data, 75):.2f} {unit}\n"
+        else:  # IPC
+            data = self.current_data
+            stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
+            stats_text += f"Selected District: {self.current_district}\n\n"
+            
+            # Count pixels in each IPC phase
+            unique_phases, counts = np.unique(data[~data.mask], return_counts=True)
+            total = np.sum(counts)
+            
+            stats_text += "IPC Phase Distribution:\n"
+            phase_names = {
+                1: "Minimal",
+                2: "Stressed",
+                3: "Crisis",
+                4: "Emergency"
+            }
+            
+            for phase, count in zip(unique_phases, counts):
+                if phase in phase_names:
+                    percentage = (count / total) * 100
+                    stats_text += f"Phase {int(phase)} ({phase_names[phase]}): {count} pixels ({percentage:.1f}%)\n"
         
         self.stats_display.setText(stats_text)
     
