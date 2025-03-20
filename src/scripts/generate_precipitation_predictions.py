@@ -119,21 +119,26 @@ def train_model(X, y):
     """Train a Random Forest model."""
     logging.info('Training model...')
     model = RandomForestRegressor(
-        n_estimators=100,
-        max_depth=10,
+        n_estimators=200,  # Increased for better accuracy
+        max_depth=15,      # Increased for more complex patterns
+        min_samples_split=5,
+        min_samples_leaf=2,
         random_state=42,
         n_jobs=-1
     )
     
-    # Scale features
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    # Scale features and targets
+    feature_scaler = StandardScaler()
+    target_scaler = StandardScaler()
+    
+    X_scaled = feature_scaler.fit_transform(X)
+    y_scaled = target_scaler.fit_transform(y.reshape(-1, 1)).flatten()
     
     # Train model
-    model.fit(X_scaled, y)
-    return model, scaler
+    model.fit(X_scaled, y_scaled)
+    return model, feature_scaler, target_scaler
 
-def generate_predictions(model, scaler, coordinates, transform, crs, coord_scaler, start_year=2024, end_year=2030):
+def generate_predictions(model, feature_scaler, target_scaler, coordinates, transform, crs, coord_scaler, start_year=2024, end_year=2030):
     """Generate predictions for future years at each location."""
     logging.info(f'Generating predictions for {start_year}-{end_year}...')
     
@@ -159,10 +164,13 @@ def generate_predictions(model, scaler, coordinates, transform, crs, coord_scale
             for year_idx, year in enumerate(future_years):
                 features = prepare_features_for_location(year, loc_coords)
                 features = np.nan_to_num(features, nan=0, posinf=0, neginf=0)
-                features_scaled = scaler.transform(features.reshape(1, -1))
-                pred = model.predict(features_scaled)[0]
+                features_scaled = feature_scaler.transform(features.reshape(1, -1))
+                pred_scaled = model.predict(features_scaled)[0]
                 
-                # Apply bounds checking
+                # Inverse transform the prediction
+                pred = target_scaler.inverse_transform([[pred_scaled]])[0][0]
+                
+                # Apply bounds checking based on historical data statistics
                 pred = np.clip(pred, 0, 1000)  # Reasonable bounds for precipitation
                 predictions[year_idx, i, j] = pred
     
@@ -230,10 +238,10 @@ def main():
     logging.info(f"Std target: {np.std(y):.2f} mm")
     
     # Train model
-    model, scaler = train_model(X, y)
+    model, feature_scaler, target_scaler = train_model(X, y)
     
     # Generate predictions for 2024-2030
-    future_years, predictions = generate_predictions(model, scaler, coordinates, transform, crs, coord_scaler)
+    future_years, predictions = generate_predictions(model, feature_scaler, target_scaler, coordinates, transform, crs, coord_scaler)
     
     # Save predictions
     save_predictions(predictions, future_years, coordinates, transform, crs)
@@ -252,8 +260,9 @@ def main():
     model_dir = 'models/precipitation'
     os.makedirs(model_dir, exist_ok=True)
     joblib.dump(model, os.path.join(model_dir, 'precipitation_prediction_model.joblib'))
-    joblib.dump(scaler, os.path.join(model_dir, 'precipitation_scaler.joblib'))
-    joblib.dump(coord_scaler, os.path.join(model_dir, 'coordinate_scaler.joblib'))
+    joblib.dump(feature_scaler, os.path.join(model_dir, 'precipitation_feature_scaler.joblib'))
+    joblib.dump(target_scaler, os.path.join(model_dir, 'precipitation_target_scaler.joblib'))
+    joblib.dump(coord_scaler, os.path.join(model_dir, 'precipitation_coordinate_scaler.joblib'))
     logging.info('Model and scalers saved for future use')
 
 if __name__ == '__main__':
