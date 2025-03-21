@@ -20,18 +20,7 @@ build/
 logs/
 *.log
 
-# Data
-data/
-*.csv
-*.tif
-*.shp
-*.shx
-*.prj
-*.dbf
-*.xml
-*.sbn
-*.sbx
-*.cpg
+
 
 # Exceptions to data exclusions
 !data/Datasets_Hackathon/cadre_harmonise_caf_ipc_assaba_yearly_grouped.csv

@@ -52,6 +52,7 @@ class DashboardWindow(QMainWindow):
         self.admin_dir = "data/Datasets_Hackathon/Admin_layers"
         self.infrastructure_dir = "data/Datasets_Hackathon/Streamwater_Line_Road_Network"
         self.ipc_dir = "data/Datasets_Hackathon/IPC_Data"
+        self.prediction_dir = "predictions"  # Add prediction directory
         
         # Load admin layers
         self.region_layer = gpd.read_file(os.path.join(self.admin_dir, "Assaba_Region_layer.shp"))
@@ -67,11 +68,31 @@ class DashboardWindow(QMainWindow):
         ipc_years = set([int(f.split('IPC')[0]) for f in os.listdir(self.ipc_dir)
                         if f.endswith('.tif') and 'IPC' in f])
         
+        # Get prediction years
+        self.prediction_years = []
+        self.gpp_prediction_years = []
+        self.precip_prediction_years = []
+        if os.path.exists(self.prediction_dir):
+            # Get GPP prediction years
+            gpp_pred_years = set([int(f.split('_')[2].split('.')[0]) for f in os.listdir(self.prediction_dir)
+                                if f.startswith('gpp_prediction_') and f.endswith('.tif')])
+            self.gpp_prediction_years = sorted(list(gpp_pred_years))
+            
+            # Get precipitation prediction years
+            precip_pred_years = set([int(f.split('_')[2].split('.')[0]) for f in os.listdir(self.prediction_dir)
+                                   if f.startswith('precipitation_prediction_') and f.endswith('.tif')])
+            self.precip_prediction_years = sorted(list(precip_pred_years))
+            
+            # Combined prediction years
+            self.prediction_years = sorted(list(gpp_pred_years | precip_pred_years))
+        
         # Use years that are available in all datasets
         self.years = sorted(list(precip_years & lc_years & gpp_years))
         self.ipc_years = sorted(list(ipc_years))  # Keep separate list for IPC years
         print(f"Available years in all datasets: {self.years}")
         print(f"Available IPC years: {self.ipc_years}")
+        print(f"Available GPP prediction years: {self.gpp_prediction_years}")
+        print(f"Available precipitation prediction years: {self.precip_prediction_years}")
         
         if not self.years:
             raise ValueError("No common years found across datasets!")
@@ -83,9 +104,13 @@ class DashboardWindow(QMainWindow):
         self.land_cover_data = {}
         self.gpp_data = {}
         self.ipc_data = {}
+        self.gpp_predictions = {}
+        self.precipitation_predictions = {}  # Add precipitation predictions storage
         self.current_year = self.years[0]
         self.current_layer = "Precipitation"
         self.current_district = "All Districts"
+        self.current_prediction_layer = "GPP"  # Add current prediction layer
+        self.current_prediction_district = "All Districts"  # Add current prediction district
         self.colorbar = None
         
         # Load data
@@ -465,10 +490,70 @@ class DashboardWindow(QMainWindow):
         prediction_controls_panel.setStyleSheet(analysis_controls_panel.styleSheet())
         prediction_controls_layout = QHBoxLayout(prediction_controls_panel)
         
-        # Add placeholder controls for Prediction tab
-        prediction_label = QLabel("Prediction Controls")
-        prediction_label.setStyleSheet("color: white;")
-        prediction_controls_layout.addWidget(prediction_label)
+        # Layer selection for Prediction tab
+        prediction_layer_label = QLabel("Layer:")
+        self.prediction_layer_combo = QComboBox()
+        self.prediction_layer_combo.addItems(["GPP", "Precipitation"])
+        self.prediction_layer_combo.currentTextChanged.connect(self.update_prediction_layer)
+        
+        # Year slider for Prediction tab
+        prediction_year_label = QLabel("Year:")
+        self.prediction_year_slider = QSlider(Qt.Orientation.Horizontal)
+        if self.prediction_years:
+            self.prediction_year_slider.setMinimum(min(self.prediction_years))
+            self.prediction_year_slider.setMaximum(max(self.prediction_years))
+            self.prediction_year_slider.setValue(min(self.prediction_years))
+            self.prediction_year_slider.valueChanged.connect(self.update_prediction_year)
+        self.prediction_year_label = QLabel(str(min(self.prediction_years)) if self.prediction_years else "No predictions")
+        self.prediction_year_label.setStyleSheet("color: white; min-width: 50px;")
+        
+        # District selection for Prediction tab
+        prediction_district_label = QLabel("District:")
+        self.prediction_district_combo = QComboBox()
+        self.prediction_district_combo.addItem("All Districts")
+        self.prediction_district_combo.addItems(self.districts)
+        self.prediction_district_combo.currentTextChanged.connect(self.update_prediction_district)
+        
+        # Add admin layers toggle checkboxes for Prediction tab
+        prediction_admin_label = QLabel("Admin Layers:")
+        self.prediction_show_region_check = QCheckBox("Region Boundary")
+        self.prediction_show_districts_check = QCheckBox("District Boundaries")
+        self.prediction_show_region_check.setChecked(True)
+        self.prediction_show_districts_check.setChecked(True)
+        self.prediction_show_region_check.stateChanged.connect(self.update_prediction_visualization)
+        self.prediction_show_districts_check.stateChanged.connect(self.update_prediction_visualization)
+        
+        # Style the checkboxes for Prediction tab
+        self.prediction_show_region_check.setStyleSheet(self.show_region_check.styleSheet())
+        self.prediction_show_districts_check.setStyleSheet(self.show_districts_check.styleSheet())
+        
+        # Add infrastructure layers toggle checkboxes for Prediction tab
+        prediction_infra_label = QLabel("Infrastructure:")
+        self.prediction_show_streams_check = QCheckBox("Stream Water")
+        self.prediction_show_roads_check = QCheckBox("Road Network")
+        self.prediction_show_streams_check.setChecked(True)
+        self.prediction_show_roads_check.setChecked(True)
+        self.prediction_show_streams_check.stateChanged.connect(self.update_prediction_visualization)
+        self.prediction_show_roads_check.stateChanged.connect(self.update_prediction_visualization)
+        
+        # Style the infrastructure checkboxes for Prediction tab
+        self.prediction_show_streams_check.setStyleSheet(infra_style)
+        self.prediction_show_roads_check.setStyleSheet(infra_style)
+        
+        # Add controls to layout for Prediction tab
+        prediction_controls_layout.addWidget(prediction_layer_label)
+        prediction_controls_layout.addWidget(self.prediction_layer_combo)
+        prediction_controls_layout.addWidget(prediction_year_label)
+        prediction_controls_layout.addWidget(self.prediction_year_slider)
+        prediction_controls_layout.addWidget(self.prediction_year_label)
+        prediction_controls_layout.addWidget(prediction_district_label)
+        prediction_controls_layout.addWidget(self.prediction_district_combo)
+        prediction_controls_layout.addWidget(prediction_admin_label)
+        prediction_controls_layout.addWidget(self.prediction_show_region_check)
+        prediction_controls_layout.addWidget(self.prediction_show_districts_check)
+        prediction_controls_layout.addWidget(prediction_infra_label)
+        prediction_controls_layout.addWidget(self.prediction_show_streams_check)
+        prediction_controls_layout.addWidget(self.prediction_show_roads_check)
         prediction_controls_layout.addStretch()
         
         prediction_main_content_layout.addWidget(prediction_controls_panel)
@@ -637,6 +722,20 @@ class DashboardWindow(QMainWindow):
             if os.path.exists(os.path.join(self.ipc_dir, file)):
                 with rasterio.open(os.path.join(self.ipc_dir, file)) as src:
                     self.ipc_data[year] = src.read(1)
+        
+        # Load GPP predictions
+        for year in self.gpp_prediction_years:
+            file = f"gpp_prediction_{year}.tif"
+            if os.path.exists(os.path.join(self.prediction_dir, file)):
+                with rasterio.open(os.path.join(self.prediction_dir, file)) as src:
+                    self.gpp_predictions[year] = src.read(1)
+        
+        # Load precipitation predictions
+        for year in self.precip_prediction_years:
+            file = f"precipitation_prediction_{year}.tif"
+            if os.path.exists(os.path.join(self.prediction_dir, file)):
+                with rasterio.open(os.path.join(self.prediction_dir, file)) as src:
+                    self.precipitation_predictions[year] = src.read(1)
         
         # Load infrastructure layers
         try:
@@ -942,6 +1041,28 @@ class DashboardWindow(QMainWindow):
         self.update_trend_plot(map_canvas)
         self.update_stats_plot(map_canvas)
     
+    def get_district_mask(self, data):
+        """Get a mask for the selected district."""
+        if self.current_district == "All Districts":
+            return np.ones_like(data, dtype=bool)
+        
+        # Get the selected district geometry
+        district_geom = self.districts_layer[self.districts_layer['ADM3_EN'] == self.current_district].geometry.iloc[0]
+        
+        # Create an affine transform for the data
+        transform = self.raster_transform
+        
+        # Create a raster mask using rasterio.mask
+        height, width = data.shape
+        mask = rasterio.features.geometry_mask(
+            [district_geom],
+            out_shape=data.shape,
+            transform=transform,
+            invert=True
+        )
+        
+        return mask
+
     def update_trend_plot(self, map_canvas):
         trend_canvas = self.trend_frame.layout().itemAt(1).widget()
         trend_fig = trend_canvas.figure
@@ -961,11 +1082,32 @@ class DashboardWindow(QMainWindow):
             ylabel = "IPC Phase"
         
         years = sorted(data_dict.keys())
-        means = [np.nanmean(data_dict[year]) for year in years]
-        means = [np.mean(data_dict[year][data_dict[year] != -1e+30]) for year in years]
+        means = []
         
-        trend_ax.plot(years, means, 'o-', color='#0d47a1')
-        trend_ax.set_title(f"Mean {self.current_layer} Over Time", color='white', fontsize=12, pad=15)
+        for year in years:
+            data = data_dict[year]
+            # Create masked array for no-data values (-9999)
+            masked_array = np.ma.masked_where((data == -9999) | (data < 0), data)
+            
+            if self.current_district != "All Districts":
+                # Get district mask and combine with no-data mask
+                district_mask = self.get_district_mask(data)
+                masked_array = np.ma.array(masked_array, mask=~district_mask | masked_array.mask)
+            
+            # Calculate mean of valid values only
+            mean_value = masked_array.mean()
+            if mean_value is not np.ma.masked:
+                means.append(float(mean_value))
+            else:
+                means.append(np.nan)
+        
+        # Remove any NaN values
+        valid_data = [(year, mean) for year, mean in zip(years, means) if not np.isnan(mean)]
+        if valid_data:
+            plot_years, plot_means = zip(*valid_data)
+            trend_ax.plot(plot_years, plot_means, 'o-', color='#0d47a1')
+            
+        trend_ax.set_title(f"Mean {self.current_layer} Over Time - {self.current_district}", color='white', fontsize=12, pad=15)
         trend_ax.set_xlabel("Year", color='white', fontsize=10)
         trend_ax.set_ylabel(ylabel, color='white', fontsize=10)
         trend_ax.tick_params(colors='white', labelsize=9)
@@ -980,11 +1122,15 @@ class DashboardWindow(QMainWindow):
         stats_fig = stats_canvas.figure
         stats_ax = stats_fig.add_subplot(111)
         
+        # Get district mask
+        district_mask = self.get_district_mask(self.current_data)
+        # Apply district mask to data
+        masked_data = self.current_data[district_mask]
+        
         if self.current_layer == "Land Cover":
-            data = self.current_data
-            # Get unique classes and their counts
-            unique_classes = np.unique(data[~data.mask])  # Exclude masked values
-            counts = [np.sum(data == c) for c in unique_classes]
+            # Get unique classes and their counts for the masked data
+            unique_classes = np.unique(masked_data[~np.ma.getmask(masked_data)])  # Exclude masked values
+            counts = [np.sum(masked_data == c) for c in unique_classes]
             total = np.sum(counts)
             percentages = (np.array(counts) / total) * 100
             
@@ -996,7 +1142,8 @@ class DashboardWindow(QMainWindow):
             
             # Create bar plot
             bars = stats_ax.bar(range(len(unique_classes)), counts)
-            stats_ax.set_title(f"Land Cover Class Distribution - {self.current_year}", color='white', fontsize=12, pad=15)
+            stats_ax.set_title(f"Land Cover Class Distribution - {self.current_year}\n{self.current_district}", 
+                             color='white', fontsize=12, pad=15)
             stats_ax.set_xlabel("Land Cover Class", color='white', fontsize=10)
             stats_ax.set_ylabel("Count", color='white', fontsize=10)
             stats_ax.tick_params(colors='white', labelsize=9)
@@ -1012,14 +1159,16 @@ class DashboardWindow(QMainWindow):
             stats_ax.set_xticks(range(len(unique_classes)))
             stats_ax.set_xticklabels([f'Class {int(c)}' for c in unique_classes], rotation=45, color='white', fontsize=9)
         else:
-            data = self.current_data.compressed()  # Get non-masked values
+            # Get non-masked values for the selected district
+            data = masked_data.compressed()  # Get non-masked values
             data = data[data > -1e+30]
             
             # Create histogram
             stats_ax.hist(data, bins=50, color='#0d47a1', alpha=0.7)
             stats_ax.axvline(np.nanmean(data), color='red', linestyle='dashed', linewidth=2, label='Mean')
             stats_ax.axvline(np.nanmedian(data), color='green', linestyle='dashed', linewidth=2, label='Median')
-            stats_ax.set_title(f"{self.current_layer} Distribution - {self.current_year}", color='white', fontsize=12, pad=15)
+            stats_ax.set_title(f"{self.current_layer} Distribution - {self.current_year}\n{self.current_district}", 
+                             color='white', fontsize=12, pad=15)
             stats_ax.set_xlabel(self.current_layer, color='white', fontsize=10)
             stats_ax.set_ylabel("Frequency", color='white', fontsize=10)
             stats_ax.tick_params(colors='white', labelsize=9)
@@ -1032,48 +1181,49 @@ class DashboardWindow(QMainWindow):
         stats_canvas.draw()
     
     def update_statistics(self):
+        # Get district mask
+        district_mask = self.get_district_mask(self.current_data)
+        # Apply district mask to data
+        masked_data = self.current_data[district_mask]
+        
         if self.current_layer == "Precipitation":
-            data = self.current_data
             unit = "mm"
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
             stats_text += f"Selected District: {self.current_district}\n\n"
-            stats_text += f"Mean: {np.mean(data):.2f} {unit}\n"
-            stats_text += f"Median: {np.median(data):.2f} {unit}\n"
-            stats_text += f"Standard Deviation: {np.std(data):.2f} {unit}\n"
-            stats_text += f"Minimum: {np.min(data):.2f} {unit}\n"
-            stats_text += f"Maximum: {np.max(data):.2f} {unit}\n"
-            stats_text += f"25th Percentile: {np.percentile(data, 25):.2f} {unit}\n"
-            stats_text += f"75th Percentile: {np.percentile(data, 75):.2f} {unit}\n"
+            stats_text += f"Mean: {np.mean(masked_data):.2f} {unit}\n"
+            stats_text += f"Median: {np.median(masked_data):.2f} {unit}\n"
+            stats_text += f"Standard Deviation: {np.std(masked_data):.2f} {unit}\n"
+            stats_text += f"Minimum: {np.min(masked_data):.2f} {unit}\n"
+            stats_text += f"Maximum: {np.max(masked_data):.2f} {unit}\n"
+            stats_text += f"25th Percentile: {np.percentile(masked_data, 25):.2f} {unit}\n"
+            stats_text += f"75th Percentile: {np.percentile(masked_data, 75):.2f} {unit}\n"
         elif self.current_layer == "Land Cover":
-            data = self.current_data
             unit = "class"
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
             stats_text += f"Selected District: {self.current_district}\n\n"
-            unique_classes, counts = np.unique(data[~data.mask], return_counts=True)
+            unique_classes, counts = np.unique(masked_data[~np.ma.getmask(masked_data)], return_counts=True)
             total = np.sum(counts)
             stats_text += "Class Distribution:\n"
             for cls, count in zip(unique_classes, counts):
                 percentage = (count / total) * 100
                 stats_text += f"Class {int(cls)}: {count} pixels ({percentage:.1f}%)\n"
         elif self.current_layer == "GPP":
-            data = self.current_data
             unit = "gC/m²/year"
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
             stats_text += f"Selected District: {self.current_district}\n\n"
-            stats_text += f"Mean: {np.mean(data):.2f} {unit}\n"
-            stats_text += f"Median: {np.median(data):.2f} {unit}\n"
-            stats_text += f"Standard Deviation: {np.std(data):.2f} {unit}\n"
-            stats_text += f"Minimum: {np.min(data):.2f} {unit}\n"
-            stats_text += f"Maximum: {np.max(data):.2f} {unit}\n"
-            stats_text += f"25th Percentile: {np.percentile(data, 25):.2f} {unit}\n"
-            stats_text += f"75th Percentile: {np.percentile(data, 75):.2f} {unit}\n"
+            stats_text += f"Mean: {np.mean(masked_data):.2f} {unit}\n"
+            stats_text += f"Median: {np.median(masked_data):.2f} {unit}\n"
+            stats_text += f"Standard Deviation: {np.std(masked_data):.2f} {unit}\n"
+            stats_text += f"Minimum: {np.min(masked_data):.2f} {unit}\n"
+            stats_text += f"Maximum: {np.max(masked_data):.2f} {unit}\n"
+            stats_text += f"25th Percentile: {np.percentile(masked_data, 25):.2f} {unit}\n"
+            stats_text += f"75th Percentile: {np.percentile(masked_data, 75):.2f} {unit}\n"
         else:  # IPC
-            data = self.current_data
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
             stats_text += f"Selected District: {self.current_district}\n\n"
             
-            # Count pixels in each IPC phase
-            unique_phases, counts = np.unique(data[~data.mask], return_counts=True)
+            # Count pixels in each IPC phase for the selected district
+            unique_phases, counts = np.unique(masked_data[~np.ma.getmask(masked_data)], return_counts=True)
             total = np.sum(counts)
             
             stats_text += "IPC Phase Distribution:\n"
@@ -1142,6 +1292,246 @@ class DashboardWindow(QMainWindow):
                 # Reset chat if there's an error
                 self.chat = self.model.start_chat(history=[])
                 self.setup_ai_context()
+    
+    def update_prediction_layer(self, layer):
+        """Update the prediction visualization when the layer changes."""
+        self.current_prediction_layer = layer
+        
+        # Update year slider range based on selected layer
+        if layer == "GPP" and self.gpp_prediction_years:
+            self.prediction_year_slider.setMinimum(min(self.gpp_prediction_years))
+            self.prediction_year_slider.setMaximum(max(self.gpp_prediction_years))
+            if self.prediction_year_slider.value() not in self.gpp_prediction_years:
+                self.prediction_year_slider.setValue(min(self.gpp_prediction_years))
+        elif layer == "Precipitation" and self.precip_prediction_years:
+            self.prediction_year_slider.setMinimum(min(self.precip_prediction_years))
+            self.prediction_year_slider.setMaximum(max(self.precip_prediction_years))
+            if self.prediction_year_slider.value() not in self.precip_prediction_years:
+                self.prediction_year_slider.setValue(min(self.precip_prediction_years))
+        
+        self.update_prediction_visualization()
+    
+    def update_prediction_year(self, year):
+        """Update the prediction visualization when the year changes."""
+        if year in self.prediction_years:
+            self.prediction_year_label.setText(str(year))
+            self.update_prediction_visualization()
+    
+    def update_prediction_district(self, district):
+        """Update the prediction visualization when the district changes."""
+        self.current_prediction_district = district
+        self.update_prediction_visualization()
+    
+    def update_prediction_visualization(self):
+        """Update the prediction map and statistics."""
+        # Clear prediction plots
+        for frame in [self.prediction_map_frame, self.prediction_trend_frame, self.prediction_stats_frame]:
+            layout = frame.layout()
+            for i in range(layout.count()):
+                widget = layout.itemAt(i).widget()
+                if isinstance(widget, FigureCanvas):
+                    widget.figure.clear()
+                    break
+        
+        # Get prediction map canvas
+        map_canvas = None
+        for i in range(self.prediction_map_frame.layout().count()):
+            widget = self.prediction_map_frame.layout().itemAt(i).widget()
+            if isinstance(widget, FigureCanvas):
+                map_canvas = widget
+                break
+        
+        if map_canvas is None:
+            return
+        
+        # Get current prediction year
+        year = self.prediction_year_slider.value()
+        
+        # Create the prediction map
+        map_fig = map_canvas.figure
+        map_ax = map_fig.add_subplot(111)
+        
+        if self.current_prediction_layer == "GPP" and year in self.gpp_predictions:
+            data = self.gpp_predictions[year]
+            colors = ['#8B4513', '#DAA520', '#90EE90', '#228B22']
+            n_bins = 256
+            custom_cmap = LinearSegmentedColormap.from_list('custom', colors, N=n_bins)
+            cmap = custom_cmap
+            title = f"Predicted GPP (gC/m²/year) - {year}"
+            vmin = 200
+            vmax = 60000
+        elif self.current_prediction_layer == "Precipitation" and year in self.precipitation_predictions:
+            data = self.precipitation_predictions[year]
+            cmap = plt.cm.Blues
+            title = f"Predicted Precipitation (mm) - {year}"
+            vmin = 0
+            vmax = 600
+        else:
+            return
+        
+        # Apply mask for nodata values
+        data = np.ma.masked_where(data == -9999, data)
+        
+        # Plot the prediction data
+        im = map_ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax, extent=[
+            self.reference_bounds.left,
+            self.reference_bounds.right,
+            self.reference_bounds.bottom,
+            self.reference_bounds.top
+        ])
+        
+        # Add colorbar
+        plt.colorbar(im, ax=map_ax, label=title.split(' - ')[0])
+        
+        # Add admin boundaries
+        if self.prediction_show_region_check.isChecked():
+            self.region_layer.boundary.plot(
+                ax=map_ax,
+                color='yellow',
+                linewidth=2,
+                zorder=3
+            )
+        
+        if self.prediction_show_districts_check.isChecked():
+            if self.current_prediction_district != "All Districts":
+                # Plot all districts in light gray first
+                self.districts_layer.boundary.plot(
+                    ax=map_ax,
+                    color='lightgray',
+                    linewidth=1,
+                    alpha=0.3,
+                    zorder=4
+                )
+                # Then highlight the selected district
+                district_mask = self.districts_layer['ADM3_EN'] == self.current_prediction_district
+                if district_mask.any():
+                    self.districts_layer[district_mask].boundary.plot(
+                        ax=map_ax,
+                        color='red',
+                        linewidth=2,
+                        zorder=5
+                    )
+                    # Fill the selected district with semi-transparent red
+                    self.districts_layer[district_mask].plot(
+                        ax=map_ax,
+                        color='red',
+                        alpha=0.1,
+                        zorder=4
+                    )
+            else:
+                # Plot all districts with better visibility
+                self.districts_layer.boundary.plot(
+                    ax=map_ax,
+                    color='white',
+                    linewidth=1.5,
+                    alpha=0.7,
+                    zorder=4
+                )
+        
+        # Add infrastructure layers
+        if self.prediction_show_streams_check.isChecked() and not self.streams_layer.empty:
+            self.streams_layer.plot(
+                ax=map_ax,
+                color='blue',
+                linewidth=1,
+                alpha=0.6,
+                zorder=2
+            )
+        
+        if self.prediction_show_roads_check.isChecked() and not self.roads_layer.empty:
+            self.roads_layer.plot(
+                ax=map_ax,
+                color='orange',
+                linewidth=1.5,
+                alpha=0.8,
+                zorder=2
+            )
+        
+        # Customize the plot
+        map_ax.set_title(title, color='white', pad=20)
+        map_ax.set_axis_off()
+        
+        # Set the extent to match the reference bounds
+        map_ax.set_xlim(self.reference_bounds.left, self.reference_bounds.right)
+        map_ax.set_ylim(self.reference_bounds.bottom, self.reference_bounds.top)
+        
+        # Update trend plot
+        self.update_prediction_trend_plot(map_canvas)
+        
+        # Update statistics plot
+        self.update_prediction_stats_plot(map_canvas)
+        
+        map_canvas.draw()
+    
+    def update_prediction_trend_plot(self, map_canvas):
+        """Update the prediction trend plot."""
+        trend_canvas = self.prediction_trend_frame.layout().itemAt(1).widget()
+        trend_fig = trend_canvas.figure
+        trend_ax = trend_fig.add_subplot(111)
+        
+        if self.current_prediction_layer == "GPP":
+            # Get historical and predicted means for GPP
+            historical_years = sorted(self.gpp_data.keys())
+            historical_means = [np.mean(self.gpp_data[year]) for year in historical_years]
+            prediction_years = sorted(self.gpp_predictions.keys())
+            prediction_means = [np.mean(self.gpp_predictions[year]) for year in prediction_years]
+            ylabel = "Mean GPP (gC/m²/year)"
+        else:  # Precipitation
+            # Get historical and predicted means for precipitation
+            historical_years = sorted(self.precipitation_data.keys())
+            historical_means = [np.mean(self.precipitation_data[year]) for year in historical_years]
+            prediction_years = sorted(self.precipitation_predictions.keys())
+            prediction_means = [np.mean(self.precipitation_predictions[year]) for year in prediction_years]
+            ylabel = "Mean Precipitation (mm)"
+        
+        # Plot historical data
+        trend_ax.plot(historical_years, historical_means, 'o-', color='#0d47a1', label='Historical')
+        
+        # Plot predictions
+        trend_ax.plot(prediction_years, prediction_means, 'o--', color='#ff9800', label='Predicted')
+        
+        trend_ax.set_title(f"{self.current_prediction_layer} Trend Analysis", color='white', fontsize=12, pad=15)
+        trend_ax.set_xlabel("Year", color='white', fontsize=10)
+        trend_ax.set_ylabel(ylabel, color='white', fontsize=10)
+        trend_ax.tick_params(colors='white', labelsize=9)
+        trend_fig.patch.set_facecolor('#3b3b3b')
+        
+        trend_fig.tight_layout()
+        trend_canvas.draw()
+    
+    def update_prediction_stats_plot(self, map_canvas):
+        """Update the prediction statistics plot."""
+        stats_canvas = self.prediction_stats_frame.layout().itemAt(1).widget()
+        stats_fig = stats_canvas.figure
+        stats_ax = stats_fig.add_subplot(111)
+        
+        year = self.prediction_year_slider.value()
+        if (self.current_prediction_layer == "GPP" and year in self.gpp_predictions) or \
+           (self.current_prediction_layer == "Precipitation" and year in self.precipitation_predictions):
+            
+            if self.current_prediction_layer == "GPP":
+                data = self.gpp_predictions[year]
+                xlabel = "GPP (gC/m²/year)"
+            else:
+                data = self.precipitation_predictions[year]
+                xlabel = "Precipitation (mm)"
+            
+            data = data[~np.isnan(data)]  # Remove NaN values
+            
+            # Create histogram
+            stats_ax.hist(data, bins=50, color='#ff9800', alpha=0.7)
+            stats_ax.axvline(np.mean(data), color='red', linestyle='dashed', linewidth=2, label='Mean')
+            stats_ax.axvline(np.median(data), color='green', linestyle='dashed', linewidth=2, label='Median')
+            
+            stats_ax.set_title(f"{self.current_prediction_layer} Distribution - {year}", color='white', fontsize=12, pad=15)
+            stats_ax.set_xlabel(xlabel, color='white', fontsize=10)
+            stats_ax.set_ylabel("Frequency", color='white', fontsize=10)
+            stats_ax.tick_params(colors='white', labelsize=9)
+            stats_ax.legend(fontsize=9)
+            
+            stats_fig.patch.set_facecolor('#3b3b3b')
+            stats_fig.tight_layout()
+            stats_canvas.draw()
 
     def generate_report(self):
 
