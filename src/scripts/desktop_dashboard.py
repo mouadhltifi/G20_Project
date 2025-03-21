@@ -27,6 +27,8 @@ import google.generativeai as genai
 import logging
 from matplotlib.patches import Patch
 
+from fpdf import FPDF
+
 class DashboardWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -390,10 +392,12 @@ class DashboardWindow(QMainWindow):
         send_button = QPushButton("Send")
         send_button.clicked.connect(self.send_message)
         
+        
         analysis_chat_layout.addWidget(analysis_chat_label)
         analysis_chat_layout.addWidget(self.chat_display)
         analysis_chat_layout.addWidget(self.chat_input)
         analysis_chat_layout.addWidget(send_button)
+
         
         # Statistics panel for Analysis tab
         analysis_stats_frame = QFrame()
@@ -433,6 +437,13 @@ class DashboardWindow(QMainWindow):
         # Add main content and side panel to splitter in Analysis tab
         analysis_splitter.addWidget(analysis_main_content)
         analysis_splitter.addWidget(analysis_side_panel)
+
+        # Create report button for Analysis tab
+        report_button = QPushButton("Generate Report")
+        report_button.clicked.connect(self.generate_report)
+
+        # Add report button to main layout in Analysis tab
+        analysis_side_layout.addWidget(report_button)
         
         # Set initial splitter sizes (70% main content, 30% side panel) in Analysis tab
         analysis_splitter.setSizes([1120, 480])
@@ -1131,6 +1142,66 @@ class DashboardWindow(QMainWindow):
                 # Reset chat if there's an error
                 self.chat = self.model.start_chat(history=[])
                 self.setup_ai_context()
+
+    def generate_report(self):
+
+        # Save current plots as images to include in the report
+        map_canvas = self.map_frame.layout().itemAt(1).widget()
+        map_canvas.figure.savefig("map_plot.png", dpi=150)
+
+        trend_canvas = self.trend_frame.layout().itemAt(1).widget()
+        trend_canvas.figure.savefig("trend_plot.png", dpi=150)
+
+        stats_canvas = self.stats_frame.layout().itemAt(1).widget()
+        stats_canvas.figure.savefig("stats_plot.png", dpi=150)
+        
+        try:
+            #Set Up context for the report
+            context = f"""You are an AI assistant specialized in environmental data analysis and visualization. 
+                You have access to data about:
+                1. Precipitation patterns
+                2. Land cover changes
+                3. Gross Primary Production (GPP)
+                
+                The data is from the Assaba region in Mauritania, spanning from 2011 to 2023.
+
+                Current view context:
+                - Layer: {self.current_layer}
+                - Year: {self.current_year}
+                - District: {self.current_district}
+
+                I'll also have the plots of this data as map_plot.png, trend_plot.png and stats_plot.png.
+
+                Generate a page long report that highlights key trends, behaviours and patterns observed regarding the layer, year and district selected,
+                providing critical insights into the extent and nature of changes and what is displayed 
+                on the plots, reference the plots as needed.
+
+                Respond only with the report text
+                
+                """
+
+            # Get response from Gemini
+            response = self.chat.send_message(context)
+
+            # Write response in a file 
+            with open("report.txt ", "w") as file:
+                file.write(response.text)
+
+            # Transform the text to a pdf file
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_font("Arial", size = 12)
+            with open("report.txt", "r") as file:
+                for line in file:
+                    pdf.cell(200, 10, txt = line, ln = True, align = 'L')
+            pdf.output("report.pdf")
+
+        except Exception as e:
+            self.chat_display.append(f"Assistant: I apologize, but I encountered an error: {str(e)}")
+            # Reset chat if there's an error
+            self.chat = self.model.start_chat(history=[])
+            self.setup_ai_context()
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
