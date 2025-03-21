@@ -26,8 +26,8 @@ from matplotlib.transforms import Affine2D
 import google.generativeai as genai
 import logging
 from matplotlib.patches import Patch
-
-from fpdf import FPDF
+import markdown
+from weasyprint import HTML, CSS
 
 class DashboardWindow(QMainWindow):
     def __init__(self):
@@ -46,7 +46,7 @@ class DashboardWindow(QMainWindow):
         self.setup_ai_context()
         
         # Initialize data
-        self.precipitation_dir = "/data/Datasets_Hackathon/Climate_Precipitation_Data"
+        self.precipitation_dir = "data/Datasets_Hackathon/Climate_Precipitation_Data"
         self.land_cover_dir = "data/Datasets_Hackathon/Modis_Land_Cover_Data"
         self.gpp_dir = "data/Datasets_Hackathon/MODIS_Gross_Primary_Production_GPP"
         self.admin_dir = "data/Datasets_Hackathon/Admin_layers"
@@ -417,12 +417,10 @@ class DashboardWindow(QMainWindow):
         send_button = QPushButton("Send")
         send_button.clicked.connect(self.send_message)
         
-        
         analysis_chat_layout.addWidget(analysis_chat_label)
         analysis_chat_layout.addWidget(self.chat_display)
         analysis_chat_layout.addWidget(self.chat_input)
         analysis_chat_layout.addWidget(send_button)
-
         
         # Statistics panel for Analysis tab
         analysis_stats_frame = QFrame()
@@ -456,19 +454,32 @@ class DashboardWindow(QMainWindow):
         analysis_stats_layout.addWidget(self.stats_display)
         
         # Add panels to side layout in Analysis tab
-        analysis_side_layout.addWidget(analysis_chat_frame)
-        analysis_side_layout.addWidget(analysis_stats_frame)
+        analysis_side_layout.addWidget(analysis_chat_frame, stretch=75)  # Set stretch to 75 for chat frame
+        analysis_side_layout.addWidget(analysis_stats_frame, stretch=25)  # Set stretch to 25 for stats frame
+        
+        # Add Generate Report button
+        generate_report_button = QPushButton("Generate Report")
+        generate_report_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0d47a1;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 10px;
+                font-size: 12px;
+                font-weight: bold;
+                margin-top: 10px;
+            }
+            QPushButton:hover {
+                background-color: #1565c0;
+            }
+        """)
+        generate_report_button.clicked.connect(self.generate_report)
+        analysis_side_layout.addWidget(generate_report_button)
         
         # Add main content and side panel to splitter in Analysis tab
         analysis_splitter.addWidget(analysis_main_content)
         analysis_splitter.addWidget(analysis_side_panel)
-
-        # Create report button for Analysis tab
-        report_button = QPushButton("Generate Report")
-        report_button.clicked.connect(self.generate_report)
-
-        # Add report button to main layout in Analysis tab
-        analysis_side_layout.addWidget(report_button)
         
         # Set initial splitter sizes (70% main content, 30% side panel) in Analysis tab
         analysis_splitter.setSizes([1120, 480])
@@ -844,10 +855,29 @@ class DashboardWindow(QMainWindow):
             vmax = 600
         elif self.current_layer == "Land Cover":
             data = self.land_cover_data[self.current_year]
-            cmap = plt.cm.tab10
+            # Define land cover class mappings
+            land_cover_classes = {
+                7: 'Open Shrublands',
+                10: 'Grasslands',
+                13: 'Urban and Built-up Lands',
+                16: 'Barren'
+            }
+            # Create custom colormap for specific land cover classes
+            colors = ['#8B4513', '#90EE90', '#808080', '#FFD700']  # Brown, Light green, Gray, Gold
+            n_classes = len(land_cover_classes)
+            custom_cmap = LinearSegmentedColormap.from_list('custom', colors, N=n_classes)
+            cmap = custom_cmap
+            
+            # Mask unwanted classes
+            data = np.ma.masked_where(
+                (data == 255) | 
+                (~np.isin(data, list(land_cover_classes.keys()))) | 
+                (data == -9999), 
+                data
+            )
             title = f"Land Cover - {self.current_year}"
-            vmin = 7
-            vmax = 16
+            vmin = min(land_cover_classes.keys())
+            vmax = max(land_cover_classes.keys())
         elif self.current_layer == "GPP":
             data = self.gpp_data[self.current_year]
             colors = ['#8B4513', '#DAA520', '#90EE90', '#228B22']
@@ -871,16 +901,13 @@ class DashboardWindow(QMainWindow):
             vmin = 0  # 0 for no data
             vmax = 4  # max phase is 4
             
-            # Create custom legend for IPC phases with better visibility
+            # Create custom legend for IPC phases with better positioning and style
             legend_elements = [
                 Patch(facecolor='#92D050', edgecolor='black', label='Phase 1: Minimal'),
                 Patch(facecolor='#FFEB3B', edgecolor='black', label='Phase 2: Stressed'),
                 Patch(facecolor='#FF9800', edgecolor='black', label='Phase 3: Crisis'),
                 Patch(facecolor='#FF0000', edgecolor='black', label='Phase 4: Emergency')
             ]
-        
-        # Apply mask for nodata values
-        data = np.ma.masked_where(data == -9999, data)
         
         # Plot the data
         im = map_ax.imshow(data, cmap=cmap, vmin=vmin, vmax=vmax, extent=[
@@ -914,18 +941,6 @@ class DashboardWindow(QMainWindow):
                 zorder=2
             )
             
-            # Add road network statistics to the plot
-            road_lengths = self.roads_layer.geometry.length
-            stats_text = f"Road Network Stats:\n"
-            stats_text += f"Total Length: {road_lengths.sum()/1000:.1f} km\n"
-            stats_text += f"Segments: {len(self.roads_layer)}"
-            map_ax.text(0.02, 0.02, stats_text,
-                       transform=map_ax.transAxes,
-                       color='white',
-                       fontsize=8,
-                       bbox=dict(facecolor='#3b3b3b', alpha=0.7, edgecolor='none'),
-                       zorder=6)
-        
         # Add region boundary if enabled
         if self.show_region_check.isChecked():
             region_layer_plot.boundary.plot(
@@ -981,11 +996,11 @@ class DashboardWindow(QMainWindow):
             # Add custom legend for IPC phases with better positioning and style
             legend = map_ax.legend(
                 handles=legend_elements,
-                loc='upper left',  # Changed to upper left to avoid overlap
-                bbox_to_anchor=(0.02, 0.98),  # Adjusted position
+                loc='lower left',
+                bbox_to_anchor=(0.02, 0.02),
                 title='IPC Classification',
-                title_fontsize=12,
-                fontsize=10,
+                title_fontsize=10,
+                fontsize=8,
                 framealpha=0.8,
                 edgecolor='white',
                 facecolor='#3b3b3b'
@@ -993,8 +1008,65 @@ class DashboardWindow(QMainWindow):
             legend.get_title().set_color('white')
             for text in legend.get_texts():
                 text.set_color('white')
+        elif self.current_layer == "Land Cover":
+            # Create custom legend for land cover classes
+            legend_elements = [
+                Patch(facecolor=colors[i], edgecolor='black', 
+                      label=land_cover_classes[class_id])
+                for i, class_id in enumerate(sorted(land_cover_classes.keys()))
+            ]
+            # Add Land Cover Types legend at bottom left
+            legend = map_ax.legend(
+                handles=legend_elements,
+                loc='lower left',
+                bbox_to_anchor=(0.02, 0.02),
+                title='Land Cover Types',
+                title_fontsize=10,
+                fontsize=8,
+                framealpha=0.8,
+                edgecolor='white',
+                facecolor='#3b3b3b'
+            )
+            legend.get_title().set_color('white')
+            for text in legend.get_texts():
+                text.set_color('white')
+                
+            # Add infrastructure and admin boundaries legend at top left
+            handles = []
+            labels = []
+            if self.show_streams_check.isChecked() and not self.streams_layer.empty:
+                handles.append(plt.Line2D([0], [0], color='blue', linewidth=1))
+                labels.append('Stream Water')
+            if self.show_roads_check.isChecked() and not self.roads_layer.empty:
+                handles.append(plt.Line2D([0], [0], color='orange', linewidth=1.5))
+                labels.append('Road Network')
+            if self.show_region_check.isChecked():
+                handles.append(plt.Line2D([0], [0], color='yellow', linewidth=2))
+                labels.append('Region Boundary')
+            if self.show_districts_check.isChecked():
+                handles.append(plt.Line2D([0], [0], color='white', linewidth=1.5))
+                labels.append('District Boundaries')
+            
+            if handles:
+                map_elements_legend = map_ax.legend(
+                    handles=handles,
+                    labels=labels,
+                    loc='upper left',
+                    bbox_to_anchor=(0.02, 0.98),
+                    title='Map Elements',
+                    title_fontsize=10,
+                    fontsize=8,
+                    framealpha=0.8,
+                    edgecolor='white',
+                    facecolor='#3b3b3b'
+                )
+                map_elements_legend.get_title().set_color('white')
+                for text in map_elements_legend.get_texts():
+                    text.set_color('white')
+                # Add both legends to the plot
+                map_ax.add_artist(legend)
         else:
-            # Add colorbar for non-IPC layers
+            # Add colorbar for other layers
             plt.colorbar(im, ax=map_ax, label=title.split(' - ')[0])
             
             # Add infrastructure and admin boundaries legend
@@ -1017,8 +1089,8 @@ class DashboardWindow(QMainWindow):
                 legend = map_ax.legend(
                     handles=handles,
                     labels=labels,
-                    loc='upper right',
-                    bbox_to_anchor=(0.98, 0.98),
+                    loc='upper left',
+                    bbox_to_anchor=(0.02, 0.98),
                     title='Map Elements',
                     title_fontsize=10,
                     fontsize=8,
@@ -1042,7 +1114,6 @@ class DashboardWindow(QMainWindow):
         self.update_stats_plot(map_canvas)
     
     def get_district_mask(self, data):
-
         """Get a mask for the selected district."""
         if self.current_district == "All Districts":
             return np.ones_like(data, dtype=bool)
@@ -1129,8 +1200,22 @@ class DashboardWindow(QMainWindow):
         masked_data = self.current_data[district_mask]
         
         if self.current_layer == "Land Cover":
-            # Get unique classes and their counts for the masked data
-            unique_classes = np.unique(masked_data[~np.ma.getmask(masked_data)])  # Exclude masked values
+            # Define land cover class mappings
+            land_cover_classes = {
+                7: 'Open Shrublands',
+                10: 'Grasslands',
+                13: 'Urban and Built-up Lands',
+                16: 'Barren'
+            }
+            
+            # Get unique classes and their counts for the masked data, excluding class 255 and unwanted classes
+            masked_data = np.ma.masked_where(
+                (masked_data == 255) | 
+                (~np.isin(masked_data, list(land_cover_classes.keys()))) | 
+                np.ma.getmask(masked_data) if isinstance(masked_data, np.ma.MaskedArray) else False, 
+                masked_data
+            )
+            unique_classes = np.unique(masked_data[~masked_data.mask])  # Exclude masked values
             counts = [np.sum(masked_data == c) for c in unique_classes]
             total = np.sum(counts)
             percentages = (np.array(counts) / total) * 100
@@ -1143,9 +1228,9 @@ class DashboardWindow(QMainWindow):
             
             # Create bar plot
             bars = stats_ax.bar(range(len(unique_classes)), counts)
-            stats_ax.set_title(f"Land Cover Class Distribution - {self.current_year}\n{self.current_district}", 
+            stats_ax.set_title(f"Land Cover Distribution - {self.current_year}\n{self.current_district}", 
                              color='white', fontsize=12, pad=15)
-            stats_ax.set_xlabel("Land Cover Class", color='white', fontsize=10)
+            stats_ax.set_xlabel("Land Cover Type", color='white', fontsize=10)
             stats_ax.set_ylabel("Count", color='white', fontsize=10)
             stats_ax.tick_params(colors='white', labelsize=9)
             
@@ -1156,13 +1241,16 @@ class DashboardWindow(QMainWindow):
                             f'{percentages[i]:.1f}%',
                             ha='center', va='bottom', color='white', fontsize=8)
             
-            # Set x-axis labels
+            # Set x-axis labels using descriptive names
             stats_ax.set_xticks(range(len(unique_classes)))
-            stats_ax.set_xticklabels([f'Class {int(c)}' for c in unique_classes], rotation=45, color='white', fontsize=9)
+            stats_ax.set_xticklabels([land_cover_classes[int(c)] for c in unique_classes], 
+                                   rotation=45, color='white', fontsize=9, ha='right')
         else:
             # Get non-masked values for the selected district
-            data = masked_data.compressed()  # Get non-masked values
-            data = data[data > -1e+30]
+            if isinstance(masked_data, np.ma.MaskedArray):
+                data = masked_data.compressed()
+            else:
+                data = masked_data[masked_data > -1e+30]  # Filter extreme values
             
             # Create histogram
             stats_ax.hist(data, bins=50, color='#0d47a1', alpha=0.7)
@@ -1199,15 +1287,37 @@ class DashboardWindow(QMainWindow):
             stats_text += f"25th Percentile: {np.percentile(masked_data, 25):.2f} {unit}\n"
             stats_text += f"75th Percentile: {np.percentile(masked_data, 75):.2f} {unit}\n"
         elif self.current_layer == "Land Cover":
-            unit = "class"
+            # Define land cover class mappings
+            land_cover_classes = {
+                7: 'Open Shrublands',
+                10: 'Grasslands',
+                13: 'Urban and Built-up Lands',
+                16: 'Barren'
+            }
+            
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
             stats_text += f"Selected District: {self.current_district}\n\n"
-            unique_classes, counts = np.unique(masked_data[~np.ma.getmask(masked_data)], return_counts=True)
+            
+            # Mask class 255 and unwanted classes before calculating statistics
+            masked_data = np.ma.masked_where(
+                (masked_data == 255) | 
+                (~np.isin(masked_data, list(land_cover_classes.keys()))) | 
+                np.ma.getmask(masked_data), 
+                masked_data
+            )
+            unique_classes = np.unique(masked_data[~np.ma.getmask(masked_data)])
+            counts = [np.sum(masked_data == c) for c in unique_classes]
             total = np.sum(counts)
-            stats_text += "Class Distribution:\n"
+            
+            stats_text += "Land Cover Distribution:\n"
+            # Sort by frequency
+            sorted_idx = np.argsort(counts)[::-1]
+            unique_classes = unique_classes[sorted_idx]
+            counts = np.array(counts)[sorted_idx]
+            
             for cls, count in zip(unique_classes, counts):
                 percentage = (count / total) * 100
-                stats_text += f"Class {int(cls)}: {count} pixels ({percentage:.1f}%)\n"
+                stats_text += f"{land_cover_classes[int(cls)]}: {count} pixels ({percentage:.1f}%)\n"
         elif self.current_layer == "GPP":
             unit = "gC/m²/year"
             stats_text = f"Statistics for {self.current_layer} ({self.current_year})\n"
@@ -1535,62 +1645,136 @@ class DashboardWindow(QMainWindow):
             stats_canvas.draw()
 
     def generate_report(self):
-        # Save current plots as images to include in the report
-        map_canvas = self.map_frame.layout().itemAt(1).widget()
-        map_canvas.figure.savefig("map_plot.png", dpi = 150)
-
-        trend_canvas = self.trend_frame.layout().itemAt(1).widget()
-        trend_canvas.figure.savefig("trend_plot.png", dpi = 150)
-
-        stats_canvas = self.stats_frame.layout().itemAt(1).widget()
-        stats_canvas.figure.savefig("stats_plot.png", dpi = 150)
-
+        """Generate a comprehensive report of the current analysis using Gemini AI."""
         try:
+            # Create a reports directory if it doesn't exist
+            reports_dir = "reports"
+            if not os.path.exists(reports_dir):
+                os.makedirs(reports_dir)
+            
+            # Create a unique subdirectory for this report
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_dir = os.path.join(reports_dir, f"report_{timestamp}")
+            os.makedirs(report_dir)
+            
+            # Save current plots as images in the report directory
+            map_canvas = self.map_frame.layout().itemAt(1).widget()
+            map_path = os.path.join(report_dir, "map_plot.png")
+            map_canvas.figure.savefig(map_path, dpi=150, bbox_inches='tight', 
+                                    facecolor='#3b3b3b', edgecolor='none')
+
+            trend_canvas = self.trend_frame.layout().itemAt(1).widget()
+            trend_path = os.path.join(report_dir, "trend_plot.png")
+            trend_canvas.figure.savefig(trend_path, dpi=150, bbox_inches='tight',
+                                      facecolor='#3b3b3b', edgecolor='none')
+
+            stats_canvas = self.stats_frame.layout().itemAt(1).widget()
+            stats_path = os.path.join(report_dir, "stats_plot.png")
+            stats_canvas.figure.savefig(stats_path, dpi=150, bbox_inches='tight',
+                                      facecolor='#3b3b3b', edgecolor='none')
+
             # Set up the context for the report with enhanced details
             context = f"""You are an AI assistant specialized in environmental data analysis and visualization for NGOs and International Organizations.
-    The available data includes:
-    1. Precipitation patterns
-    2. Land cover changes
-    3. Gross Primary Production (GPP)
+The available data includes:
+1. Precipitation patterns
+2. Land cover changes
+3. Gross Primary Production (GPP)
 
-    Data Context:
-    - Region: Assaba, Mauritania (2011-2023)
-    - Current Layer: {self.current_layer}
-    - Year: {self.current_year}
-    - District: {self.current_district}
+Data Context:
+- Region: Assaba, Mauritania (2011-2023)
+- Current Layer: {self.current_layer}
+- Year: {self.current_year}
+- District: {self.current_district}
 
-    This application is designed to support key actions such as:
-    - Identifying areas needing humanitarian and environmental intervention.
-    - Tracking restoration and conservation projects.
-    - Informing international partners and local leaders to foster coordinated actions.
-    - Delivering clear, easy-to-understand visuals for donor communication and advocacy.
+This application is designed to support key actions such as:
+- Identifying areas needing humanitarian and environmental intervention.
+- Tracking restoration and conservation projects.
+- Informing international partners and local leaders to foster coordinated actions.
+- Delivering clear, easy-to-understand visuals for donor communication and advocacy.
 
-    The report must be generated in Markdown format and include clearly defined sections. Please incorporate the following precise Markdown image placeholders in your report to reference the visuals:
-    - Map Plot: ![Map Plot](map_plot.png)
-    - Trend Plot: ![Trend Plot](trend_plot.png)
-    - Stats Plot: ![Stats Plot](stats_plot.png)
+The report must be generated in Markdown format and include clearly defined sections. Please incorporate the following precise Markdown image references in your report:
+- Map Plot: ![Map Plot](map_plot.png)
+- Trend Plot: ![Trend Plot](trend_plot.png)
+- Stats Plot: ![Stats Plot](stats_plot.png)
 
-    Generate a comprehensive, page-long report that:
-    - Introduces the importance of environmental intervention and the NGO perspective.
-    - Analyzes key trends and patterns from the provided data.
-    - Provides actionable insights for improving humanitarian responses and international collaboration.
-    - Uses headers, bullet points, and clear sections for readability.
+Generate a comprehensive, page-long report that:
+- Introduces the importance of environmental intervention and the NGO perspective.
+- Analyzes key trends and patterns from the provided data.
+- Provides actionable insights for improving humanitarian responses and international collaboration.
+- Uses headers, bullet points, and clear sections for readability.
 
-    Respond only with the Markdown text.
-    """
-            # Get response from the chatbot
+Respond only with the Markdown text.
+"""
+            # Get response from Gemini
             response = self.chat.send_message(context)
+            
+            # Clean up the response text and save as markdown
+            markdown_text = response.text.replace("```markdown", "").replace("```", "")
+            markdown_path = os.path.join(report_dir, "report.md")
+            with open(markdown_path, 'w') as f:
+                f.write(markdown_text)
+            
+            # Add custom CSS for better PDF styling
+            css = CSS(string='''
+                @page { 
+                    margin: 1cm;
+                    size: letter;
+                    @top-right {
+                        content: counter(page);
+                    }
+                }
+                body {
+                    font-family: Arial, sans-serif;
+                    line-height: 1.6;
+                    max-width: 100%;
+                }
+                h1 { color: #0d47a1; }
+                h2 { color: #1565c0; }
+                img {
+                    max-width: 100%;
+                    height: auto;
+                    margin: 20px 0;
+                    display: block;
+                }
+                p { margin: 10px 0; }
+                ul { margin: 10px 0; }
+            ''')
 
-            response = response.replace("```markdown", "")
+            # Convert markdown to HTML
+            with open(markdown_path, 'r') as f:
+                markdown_content = f.read()
+            html = markdown.markdown(markdown_content)
+            
+            # Add HTML wrapper with proper styling
+            html_content = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+            </head>
+            <body>
+                {html}
+            </body>
+            </html>
+            """
 
-            # Write the chatbot's Markdown response into a file
-            with open("report.md", "w") as file:
-                file.write(response.text)
+            # Save HTML file
+            html_path = os.path.join(report_dir, "report.html")
+            with open(html_path, 'w') as f:
+                f.write(html_content)
 
-            # Optionally, you can add further code to convert the markdown file to PDF if needed.
+            # Generate PDF
+            pdf_path = os.path.join(report_dir, "environmental_report.pdf")
+            HTML(string=html_content, base_url=report_dir).write_pdf(pdf_path, stylesheets=[css])
+            
+            # Show success message in chat
+            self.chat_display.append(f"Assistant: Report generated successfully in '{report_dir}'")
+            self.chat_display.append(f"Files generated:\n- {pdf_path}\n- {markdown_path}\n- {html_path}")
+            
         except Exception as e:
-            print("Error generating report:", e)
-
+            self.chat_display.append(f"Assistant: Error generating report: {str(e)}")
+            import traceback
+            self.chat_display.append(f"Traceback: {traceback.format_exc()}")
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
