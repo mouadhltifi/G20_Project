@@ -46,7 +46,7 @@ class DashboardWindow(QMainWindow):
         self.setup_ai_context()
         
         # Initialize data
-        self.precipitation_dir = "data/Datasets_Hackathon/Climate_Precipitation_Data"
+        self.precipitation_dir = "/data/Datasets_Hackathon/Climate_Precipitation_Data"
         self.land_cover_dir = "data/Datasets_Hackathon/Modis_Land_Cover_Data"
         self.gpp_dir = "data/Datasets_Hackathon/MODIS_Gross_Primary_Production_GPP"
         self.admin_dir = "data/Datasets_Hackathon/Admin_layers"
@@ -1042,6 +1042,7 @@ class DashboardWindow(QMainWindow):
         self.update_stats_plot(map_canvas)
     
     def get_district_mask(self, data):
+
         """Get a mask for the selected district."""
         if self.current_district == "All Districts":
             return np.ones_like(data, dtype=bool)
@@ -1534,63 +1535,61 @@ class DashboardWindow(QMainWindow):
             stats_canvas.draw()
 
     def generate_report(self):
-
         # Save current plots as images to include in the report
         map_canvas = self.map_frame.layout().itemAt(1).widget()
-        map_canvas.figure.savefig("map_plot.png", dpi=150)
+        map_canvas.figure.savefig("map_plot.png", dpi = 150)
 
         trend_canvas = self.trend_frame.layout().itemAt(1).widget()
-        trend_canvas.figure.savefig("trend_plot.png", dpi=150)
+        trend_canvas.figure.savefig("trend_plot.png", dpi = 150)
 
         stats_canvas = self.stats_frame.layout().itemAt(1).widget()
-        stats_canvas.figure.savefig("stats_plot.png", dpi=150)
-        
+        stats_canvas.figure.savefig("stats_plot.png", dpi = 150)
+
         try:
-            #Set Up context for the report
-            context = f"""You are an AI assistant specialized in environmental data analysis and visualization. 
-                You have access to data about:
-                1. Precipitation patterns
-                2. Land cover changes
-                3. Gross Primary Production (GPP)
-                
-                The data is from the Assaba region in Mauritania, spanning from 2011 to 2023.
+            # Set up the context for the report with enhanced details
+            context = f"""You are an AI assistant specialized in environmental data analysis and visualization for NGOs and International Organizations.
+    The available data includes:
+    1. Precipitation patterns
+    2. Land cover changes
+    3. Gross Primary Production (GPP)
 
-                Current view context:
-                - Layer: {self.current_layer}
-                - Year: {self.current_year}
-                - District: {self.current_district}
+    Data Context:
+    - Region: Assaba, Mauritania (2011-2023)
+    - Current Layer: {self.current_layer}
+    - Year: {self.current_year}
+    - District: {self.current_district}
 
-                I'll also have the plots of this data as map_plot.png, trend_plot.png and stats_plot.png.
+    This application is designed to support key actions such as:
+    - Identifying areas needing humanitarian and environmental intervention.
+    - Tracking restoration and conservation projects.
+    - Informing international partners and local leaders to foster coordinated actions.
+    - Delivering clear, easy-to-understand visuals for donor communication and advocacy.
 
-                Generate a page long report that highlights key trends, behaviours and patterns observed regarding the layer, year and district selected,
-                providing critical insights into the extent and nature of changes and what is displayed 
-                on the plots, reference the plots as needed.
+    The report must be generated in Markdown format and include clearly defined sections. Please incorporate the following precise Markdown image placeholders in your report to reference the visuals:
+    - Map Plot: ![Map Plot](map_plot.png)
+    - Trend Plot: ![Trend Plot](trend_plot.png)
+    - Stats Plot: ![Stats Plot](stats_plot.png)
 
-                Respond only with the report text
-                
-                """
+    Generate a comprehensive, page-long report that:
+    - Introduces the importance of environmental intervention and the NGO perspective.
+    - Analyzes key trends and patterns from the provided data.
+    - Provides actionable insights for improving humanitarian responses and international collaboration.
+    - Uses headers, bullet points, and clear sections for readability.
 
-            # Get response from Gemini
+    Respond only with the Markdown text.
+    """
+            # Get response from the chatbot
             response = self.chat.send_message(context)
 
-            # Write response in a file 
-            with open("report.txt ", "w") as file:
+            response = response.replace("```markdown", "")
+
+            # Write the chatbot's Markdown response into a file
+            with open("report.md", "w") as file:
                 file.write(response.text)
 
-            # Transform the text to a pdf file
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_font("Arial", size = 12)
-            with open("report.txt", "r") as file:
-                for line in file:
-                    pdf.cell(200, 10, txt = line, ln = True, align = 'L')
-            pdf.output("report.pdf")
-
+            # Optionally, you can add further code to convert the markdown file to PDF if needed.
         except Exception as e:
-            self.chat_display.append(f"Assistant: I apologize, but I encountered an error: {str(e)}")
-            # Reset chat if there's an error
-            self.chat = self.model.start_chat(history=[])
-            self.setup_ai_context()
+            print("Error generating report:", e)
 
 
 if __name__ == '__main__':
